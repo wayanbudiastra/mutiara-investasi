@@ -58,15 +58,21 @@ export default function DividendsPage() {
   const [editItem, setEditItem] = useState<Dividend | null>(null)
   const [form, setForm] = useState(emptyForm)
   const [selectedSecurityId, setSelectedSecurityId] = useState('')
+  const [secSearch, setSecSearch] = useState('')
+  const [secDropdownOpen, setSecDropdownOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [filterSaham, setFilterSaham] = useState('')
   const [filterStatus, setFilterStatus] = useState<'ALL' | 'ESTIMASI' | 'DONE'>('ALL')
+  const [page, setPage] = useState(1)
+  const PAGE_SIZE = 10
 
   useEffect(() => {
     const param = searchParams.get('filterSaham')
     if (param) setFilterSaham(param)
   }, [searchParams])
+
+  useEffect(() => { setPage(1) }, [filterSaham, filterStatus])
 
   const fetchDividends = useCallback(async () => {
     setLoading(true)
@@ -108,6 +114,8 @@ export default function DividendsPage() {
     setEditItem(null)
     setForm(emptyForm)
     setSelectedSecurityId('')
+    setSecSearch('')
+    setSecDropdownOpen(false)
     setShowModal(true)
   }
 
@@ -125,12 +133,16 @@ export default function DividendsPage() {
     // pre-select matching security by nama (broker account)
     const match = securities.find(s => s.nama === d.keterangan)
     setSelectedSecurityId(match?.id ?? '')
+    setSecSearch('')
+    setSecDropdownOpen(false)
     setShowModal(true)
   }
 
   const closeModal = () => {
     setShowModal(false)
     setEditItem(null)
+    setSecSearch('')
+    setSecDropdownOpen(false)
   }
 
   const handleSecuritySelect = (secId: string) => {
@@ -193,6 +205,9 @@ export default function DividendsPage() {
     return matchSaham && matchStatus
   })
 
+  const totalPages = Math.ceil(filtered.length / PAGE_SIZE)
+  const pagedFiltered = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+
   // Chart — only DONE entries
   const doneDividends = dividends.filter(d => d.status === 'DONE')
   const years = Array.from(new Set(doneDividends.map(d => d.tahun))).sort() as number[]
@@ -208,9 +223,13 @@ export default function DividendsPage() {
     return entry
   })
 
-  const totalDone = doneDividends.reduce((s, d) => s + Number(d.total), 0)
+  const currentYear = new Date().getFullYear()
+
+  const totalDone = doneDividends
+    .filter(d => d.tahun === currentYear)
+    .reduce((s, d) => s + Number(d.total), 0)
   const totalEstimasi = dividends
-    .filter(d => d.status === 'ESTIMASI')
+    .filter(d => d.status === 'ESTIMASI' && d.tahun === currentYear)
     .reduce((s, d) => s + Number(d.total), 0)
 
   const rp = (v: number) => `Rp ${v.toLocaleString('id-ID')}`
@@ -240,18 +259,18 @@ export default function DividendsPage() {
           </button>
         </div>
 
-        {/* Summary cards */}
+        {/* Summary cards — Year To Date */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
           <div className="bg-white rounded-lg shadow p-4">
-            <p className="text-xs text-gray-500 mb-1">Total Terealisasi (DONE)</p>
+            <p className="text-xs text-gray-500 mb-1">Total Terealisasi {currentYear} (YTD)</p>
             <p className="text-xl font-bold text-green-600">{rp(totalDone)}</p>
           </div>
           <div className="bg-white rounded-lg shadow p-4">
-            <p className="text-xs text-gray-500 mb-1">Total Estimasi</p>
+            <p className="text-xs text-gray-500 mb-1">Total Estimasi {currentYear} (YTD)</p>
             <p className="text-xl font-bold text-orange-500">{rp(totalEstimasi)}</p>
           </div>
           <div className="bg-white rounded-lg shadow p-4">
-            <p className="text-xs text-gray-500 mb-1">Total Keseluruhan</p>
+            <p className="text-xs text-gray-500 mb-1">Total Keseluruhan {currentYear} (YTD)</p>
             <p className="text-xl font-bold text-indigo-600">{rp(totalDone + totalEstimasi)}</p>
           </div>
         </div>
@@ -311,68 +330,102 @@ export default function DividendsPage() {
             ) : filtered.length === 0 ? (
               <div className="p-12 text-center text-gray-500">Belum ada data dividen</div>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      {['No', 'Bulan', 'Tahun', 'Saham', 'Dividen/Lembar', 'Lot', 'Total', 'Keterangan', 'Status', 'Aksi'].map(h => (
-                        <th key={h} className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
-                          {h}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody className="bg-white divide-y divide-gray-200">
-                    {filtered.map((d, idx) => (
-                      <tr
-                        key={d.id}
-                        className={d.status === 'DONE' ? 'bg-yellow-50 hover:bg-yellow-100' : 'bg-orange-50 hover:bg-orange-100'}
-                      >
-                        <td className="px-4 py-3 text-sm text-gray-500">{idx + 1}</td>
-                        <td className="px-4 py-3 text-sm text-gray-900">{d.bulan}</td>
-                        <td className="px-4 py-3 text-sm text-gray-900">{d.tahun}</td>
-                        <td className="px-4 py-3">
-                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-100 text-indigo-800">
-                            {d.saham}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-sm text-gray-900">{rp(Number(d.dividen))}</td>
-                        <td className="px-4 py-3 text-sm text-gray-900">{d.lot}</td>
-                        <td className="px-4 py-3 text-sm font-semibold text-gray-900">{rp(Number(d.total))}</td>
-                        <td className="px-4 py-3 text-sm text-gray-700 font-medium">{d.keterangan}</td>
-                        <td className="px-4 py-3">
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-bold ${
-                            d.status === 'DONE'
-                              ? 'bg-green-100 text-green-800'
-                              : 'bg-orange-100 text-orange-800'
-                          }`}>
-                            {d.status}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-sm">
-                          <div className="flex items-center gap-3">
-                            {d.status === 'ESTIMASI' && (
-                              <button
-                                onClick={() => openEdit(d)}
-                                className="text-xs text-indigo-600 hover:text-indigo-800 font-medium"
-                              >
-                                Edit
-                              </button>
-                            )}
-                            <button
-                              onClick={() => handleDelete(d.id)}
-                              disabled={deletingId === d.id}
-                              className="text-xs text-red-600 hover:text-red-800 disabled:opacity-50"
-                            >
-                              {deletingId === d.id ? '...' : 'Hapus'}
-                            </button>
-                          </div>
-                        </td>
+              <>
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        {['No', 'Bulan', 'Tahun', 'Saham', 'Dividen/Lembar', 'Lot', 'Total', 'Keterangan', 'Status', 'Aksi'].map(h => (
+                          <th key={h} className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
+                            {h}
+                          </th>
+                        ))}
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {pagedFiltered.map((d, idx) => (
+                        <tr
+                          key={d.id}
+                          className={d.status === 'DONE' ? 'bg-yellow-50 hover:bg-yellow-100' : 'bg-orange-50 hover:bg-orange-100'}
+                        >
+                          <td className="px-4 py-3 text-sm text-gray-500">{(page - 1) * PAGE_SIZE + idx + 1}</td>
+                          <td className="px-4 py-3 text-sm text-gray-900">{d.bulan}</td>
+                          <td className="px-4 py-3 text-sm text-gray-900">{d.tahun}</td>
+                          <td className="px-4 py-3">
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-100 text-indigo-800">
+                              {d.saham}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-sm text-gray-900">{rp(Number(d.dividen))}</td>
+                          <td className="px-4 py-3 text-sm text-gray-900">{d.lot}</td>
+                          <td className="px-4 py-3 text-sm font-semibold text-gray-900">{rp(Number(d.total))}</td>
+                          <td className="px-4 py-3 text-sm text-gray-700 font-medium">{d.keterangan}</td>
+                          <td className="px-4 py-3">
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-bold ${
+                              d.status === 'DONE'
+                                ? 'bg-green-100 text-green-800'
+                                : 'bg-orange-100 text-orange-800'
+                            }`}>
+                              {d.status}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-sm">
+                            <div className="flex items-center gap-3">
+                              {d.status === 'ESTIMASI' && (
+                                <button
+                                  onClick={() => openEdit(d)}
+                                  className="text-xs text-indigo-600 hover:text-indigo-800 font-medium"
+                                >
+                                  Edit
+                                </button>
+                              )}
+                              <button
+                                onClick={() => handleDelete(d.id)}
+                                disabled={deletingId === d.id}
+                                className="text-xs text-red-600 hover:text-red-800 disabled:opacity-50"
+                              >
+                                {deletingId === d.id ? '...' : 'Hapus'}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Pagination */}
+                {totalPages > 1 && (
+                  <div className="bg-white px-4 py-3 flex items-center justify-between border-t border-gray-200">
+                    <div className="text-sm text-gray-700">
+                      Menampilkan{' '}
+                      <span className="font-medium">{(page - 1) * PAGE_SIZE + 1}</span>
+                      {' '}–{' '}
+                      <span className="font-medium">{Math.min(page * PAGE_SIZE, filtered.length)}</span>
+                      {' '}dari{' '}
+                      <span className="font-medium">{filtered.length}</span> data
+                    </div>
+                    <div className="flex gap-1">
+                      <button onClick={() => setPage(1)} disabled={page === 1}
+                        className="px-2 py-1 text-sm border rounded disabled:opacity-40 hover:bg-gray-50">«</button>
+                      <button onClick={() => setPage(p => p - 1)} disabled={page === 1}
+                        className="px-3 py-1 text-sm border rounded disabled:opacity-40 hover:bg-gray-50">Prev</button>
+                      {Array.from({ length: totalPages }, (_, i) => i + 1)
+                        .filter(p => Math.abs(p - page) <= 2)
+                        .map(p => (
+                          <button key={p} onClick={() => setPage(p)}
+                            className={`px-3 py-1 text-sm border rounded ${p === page ? 'bg-indigo-600 text-white border-indigo-600' : 'hover:bg-gray-50'}`}>
+                            {p}
+                          </button>
+                        ))}
+                      <button onClick={() => setPage(p => p + 1)} disabled={page === totalPages}
+                        className="px-3 py-1 text-sm border rounded disabled:opacity-40 hover:bg-gray-50">Next</button>
+                      <button onClick={() => setPage(totalPages)} disabled={page === totalPages}
+                        className="px-2 py-1 text-sm border rounded disabled:opacity-40 hover:bg-gray-50">»</button>
+                    </div>
+                  </div>
+                )}
+              </>
             )}
           </div>
         )}
@@ -512,22 +565,80 @@ export default function DividendsPage() {
                 </div>
               </div>
 
-              {/* Akun Sekuritas selector */}
+              {/* Akun Sekuritas — searchable combobox */}
               <div>
                 <label className="block text-xs font-medium text-gray-700 mb-1">
                   Akun Sekuritas <span className="text-red-500">*</span>
                 </label>
                 {securities.length > 0 ? (
-                  <select
-                    value={selectedSecurityId}
-                    onChange={e => handleSecuritySelect(e.target.value)}
-                    className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-indigo-500 focus:border-indigo-500"
-                  >
-                    <option value="">-- Pilih Akun Sekuritas --</option>
-                    {securities.map(s => (
-                      <option key={s.id} value={s.id}>{s.nama}</option>
-                    ))}
-                  </select>
+                  <div className="relative">
+                    {/* trigger / selected display */}
+                    <button
+                      type="button"
+                      onClick={() => setSecDropdownOpen(o => !o)}
+                      className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-left flex items-center justify-between focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500"
+                    >
+                      <span className={selectedSecurityId ? 'text-gray-900' : 'text-gray-400'}>
+                        {selectedSecurityId
+                          ? securities.find(s => s.id === selectedSecurityId)?.nama
+                          : '-- Pilih Akun Sekuritas --'}
+                      </span>
+                      <svg className={`w-4 h-4 text-gray-400 transition-transform ${secDropdownOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </button>
+
+                    {/* dropdown panel */}
+                    {secDropdownOpen && (
+                      <div className="absolute z-50 mt-1 w-full bg-white border border-gray-200 rounded-md shadow-lg">
+                        {/* search input */}
+                        <div className="p-2 border-b border-gray-100">
+                          <input
+                            autoFocus
+                            type="text"
+                            value={secSearch}
+                            onChange={e => setSecSearch(e.target.value)}
+                            placeholder="Cari sekuritas..."
+                            className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                          />
+                        </div>
+
+                        {/* options list */}
+                        <ul className="max-h-48 overflow-y-auto">
+                          {securities
+                            .filter(s => s.nama.toLowerCase().includes(secSearch.toLowerCase()))
+                            .length === 0 ? (
+                            <li className="px-3 py-2 text-sm text-gray-400 text-center">
+                              Sekuritas tidak ditemukan
+                            </li>
+                          ) : (
+                            securities
+                              .filter(s => s.nama.toLowerCase().includes(secSearch.toLowerCase()))
+                              .map(s => (
+                                <li
+                                  key={s.id}
+                                  onClick={() => {
+                                    handleSecuritySelect(s.id)
+                                    setSecDropdownOpen(false)
+                                    setSecSearch('')
+                                  }}
+                                  className={`px-3 py-2 text-sm cursor-pointer hover:bg-indigo-50 hover:text-indigo-700 ${
+                                    selectedSecurityId === s.id ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-900'
+                                  }`}
+                                >
+                                  {s.nama}
+                                </li>
+                              ))
+                          )}
+                        </ul>
+                      </div>
+                    )}
+
+                    {/* close dropdown when clicking outside */}
+                    {secDropdownOpen && (
+                      <div className="fixed inset-0 z-40" onClick={() => { setSecDropdownOpen(false); setSecSearch('') }} />
+                    )}
+                  </div>
                 ) : (
                   <>
                     <div className="rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800 mb-2">

@@ -23,7 +23,7 @@ async function ensureTable() {
   `)
 }
 
-export async function GET() {
+export async function GET(_request: NextRequest) {
   try {
     const session = await getServerSession(authOptions)
     const userId = (session?.user as any)?.id
@@ -32,7 +32,7 @@ export async function GET() {
     await ensureTable()
 
     const rows = await prisma.$queryRawUnsafe(
-      `SELECT * FROM "dividends" WHERE "userId" = $1 ORDER BY "tahun" DESC, "createdAt" DESC`,
+      `SELECT * FROM "dividends" WHERE "userId" = $1 ORDER BY "tahun" DESC, "createdAt" DESC LIMIT 100`,
       userId
     )
     return NextResponse.json(rows)
