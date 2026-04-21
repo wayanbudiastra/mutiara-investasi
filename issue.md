@@ -6,7 +6,7 @@
 
 **Modul:** Rekap Dividen — Form Tambah / Edit  
 **Prioritas:** Tinggi  
-**Status:** Open
+**Status:** Closed ✅
 
 ### Deskripsi
 Pada saat user hendak memilih akun sekuritas di form input dividen, dropdown hanya menampilkan daftar statis tanpa fitur pencarian. Jika user memiliki banyak sekuritas terdaftar, proses pemilihan menjadi tidak efisien.
@@ -29,7 +29,7 @@ Pada saat user hendak memilih akun sekuritas di form input dividen, dropdown han
 
 **Modul:** Rekap Dividen — Tab Data Dividen  
 **Prioritas:** Tinggi  
-**Status:** Open
+**Status:** Closed ✅
 
 ### Deskripsi
 Tabel data dividen saat ini menampilkan semua data sekaligus tanpa pagination. Seiring bertambahnya data, performa halaman akan menurun dan tampilan menjadi tidak rapi.
@@ -55,7 +55,7 @@ Tabel data dividen saat ini menampilkan semua data sekaligus tanpa pagination. S
 
 **Modul:** Rekap Dividen — Summary Cards  
 **Prioritas:** Medium  
-**Status:** Open
+**Status:** Closed ✅
 
 ### Deskripsi
 Summary card yang menampilkan **Total Terealisasi (DONE)**, **Total Estimasi**, dan **Total Keseluruhan** saat ini menghitung akumulasi seluruh data dari semua tahun. Seharusnya card summary hanya menampilkan data **Year To Date (YTD)** — yaitu total dari tahun berjalan saja.
@@ -75,6 +75,30 @@ Rekap total keseluruhan per tahun akan disajikan di halaman terpisah.
 - [ ] Total Terealisasi YTD hanya menghitung data dengan `status = 'DONE'` dan `tahun = currentYear`
 - [ ] Total Keseluruhan YTD = Total DONE + Total ESTIMASI tahun berjalan
 - [ ] Halaman / tab rekap tahunan multi-year dibuat terpisah (scope issue berikutnya)
+
+---
+
+## ISSUE-004 · Rekap Chart Menampilkan Maksimal 5 Tahun Terakhir
+
+**Modul:** Rekap Dividen — Tab Rekap Chart  
+**Prioritas:** Medium  
+**Status:** Open
+
+### Deskripsi
+Tab Rekap Chart saat ini menampilkan semua tahun yang ada di data dividen (status DONE) tanpa batasan. Jika data sudah mencakup banyak tahun, bar chart dan tabel summary menjadi terlalu lebar dan sulit dibaca. Cukup tampilkan **5 tahun terakhir** saja.
+
+### Expected Behavior
+- Bar chart hanya menampilkan kolom untuk **5 tahun terakhir** (dihitung mundur dari tahun terbaru yang ada di data)
+- Tabel "Total Per Akun Per Tahun" hanya menampilkan kolom 5 tahun terakhir
+- Grand Total pada tabel dihitung berdasarkan 5 tahun yang ditampilkan saja
+- Jika data kurang dari 5 tahun, tampilkan semua tahun yang tersedia
+
+### Acceptance Criteria
+- [ ] Ambil daftar tahun unik dari `doneDividends`, urutkan DESC, slice 5 teratas, lalu sort ASC untuk tampilan kiri-ke-kanan
+- [ ] Bar chart hanya render `<Bar>` untuk 5 tahun tersebut
+- [ ] Kolom tabel summary hanya menampilkan 5 tahun tersebut
+- [ ] Grand Total kolom per tahun dan kolom Total konsisten dengan data yang ditampilkan
+- [ ] Jika data < 5 tahun, tampilkan semua tahun yang ada (tidak ada error)
 
 ---
 
