@@ -82,7 +82,7 @@ Rekap total keseluruhan per tahun akan disajikan di halaman terpisah.
 
 **Modul:** Rekap Dividen — Tab Rekap Chart  
 **Prioritas:** Medium  
-**Status:** Open
+**Status:** Closed ✅
 
 ### Deskripsi
 Tab Rekap Chart saat ini menampilkan semua tahun yang ada di data dividen (status DONE) tanpa batasan. Jika data sudah mencakup banyak tahun, bar chart dan tabel summary menjadi terlalu lebar dan sulit dibaca. Cukup tampilkan **5 tahun terakhir** saja.

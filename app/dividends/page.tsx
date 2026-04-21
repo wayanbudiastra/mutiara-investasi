@@ -210,7 +210,7 @@ export default function DividendsPage() {
 
   // Chart — only DONE entries
   const doneDividends = dividends.filter(d => d.status === 'DONE')
-  const years = Array.from(new Set(doneDividends.map(d => d.tahun))).sort() as number[]
+  const years = (Array.from(new Set(doneDividends.map(d => d.tahun))).sort() as number[]).slice(-5)
   const keterangans = Array.from(new Set(doneDividends.map(d => d.keterangan)))
 
   const chartData = keterangans.map(ket => {
