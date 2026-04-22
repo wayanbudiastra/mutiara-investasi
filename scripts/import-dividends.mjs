@@ -19,7 +19,8 @@ const { PrismaClient } = require('@prisma/client')
 // ─── KONFIGURASI ────────────────────────────────────────────────────────────
 
 // Email akun yang akan menjadi pemilik data
-const USER_EMAIL = 'wayan.budiastra26@gmail.com'
+const USER_EMAIL = 'wayan.budiastra07@gmail.com'
+const USER_ID    = 'cmo8gr6wg000013555943rxay' // hardcoded, skip DB lookup
 
 // Mapping nama kolom CSV → field database
 // Sesuaikan dengan header kolom di file CSV Anda
@@ -98,17 +99,10 @@ async function main() {
   const prisma = new PrismaClient()
 
   try {
-    // 1. Lookup userId berdasarkan email
-    console.log(`\nMencari user: ${USER_EMAIL}`)
-    const users = await prisma.$queryRawUnsafe(
-      `SELECT id, email FROM users WHERE email = $1 LIMIT 1`, USER_EMAIL
-    )
-    if (!users.length) {
-      console.error(`User dengan email "${USER_EMAIL}" tidak ditemukan di database.`)
-      process.exit(1)
-    }
-    const userId = users[0].id
-    console.log(`✓ User ditemukan — userId: ${userId}`)
+    // 1. Gunakan userId langsung (sudah diketahui)
+    const userId = USER_ID
+    console.log(`\n✓ User: ${USER_EMAIL}`)
+    console.log(`  userId: ${userId}`)
 
     // 2. Load daftar sekuritas user (untuk validasi keterangan)
     console.log(`\nMemuat daftar sekuritas...`)
