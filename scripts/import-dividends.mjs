@@ -1,11 +1,13 @@
 /**
- * Script import data dividen dari CSV (export Google Sheets)
+ * Script import data dividen dari CSV (export Google Sheets — tanpa baris header)
  *
  * Cara pakai:
  *   1. Di Google Sheets: File > Download > Comma Separated Values (.csv)
  *   2. Simpan file CSV ke folder scripts/ (misal: scripts/dividen.csv)
- *   3. Sesuaikan COLUMN_MAP di bawah dengan nama kolom di CSV Anda
- *   4. Jalankan: node scripts/import-dividends.mjs scripts/dividen.csv
+ *   3. Jalankan: node scripts/import-dividends.mjs scripts/dividen.csv
+ *
+ * Urutan kolom yang diharapkan (sesuai sheet):
+ *   A=Bulan  B=Tahun  C=Saham  D=Dividen/Lembar  E=Lot  F=Total  G=Keterangan  H=Status
  */
 
 import fs from 'fs'
@@ -14,21 +16,23 @@ import { createRequire } from 'module'
 import { randomUUID } from 'crypto'
 
 // Load .env.local (Next.js tidak otomatis expose ke script Node biasa)
-const envPath = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1')), '../.env.local')
+const envPath = path.resolve(
+  path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1')),
+  '../.env.local'
+)
 if (fs.existsSync(envPath)) {
-  const lines = fs.readFileSync(envPath, 'utf-8').split('\n')
-  for (const line of lines) {
-    const trimmed = line.trim()
-    if (!trimmed || trimmed.startsWith('#')) continue
-    const eq = trimmed.indexOf('=')
+  for (const line of fs.readFileSync(envPath, 'utf-8').split('\n')) {
+    const t = line.trim()
+    if (!t || t.startsWith('#')) continue
+    const eq = t.indexOf('=')
     if (eq === -1) continue
-    const key = trimmed.slice(0, eq).trim()
-    const val = trimmed.slice(eq + 1).trim().replace(/^['"]|['"]$/g, '')
+    const key = t.slice(0, eq).trim()
+    const val = t.slice(eq + 1).trim().replace(/^['"]|['"]$/g, '')
     if (!process.env[key]) process.env[key] = val
   }
   console.log('✓ .env.local dimuat')
 } else {
-  console.warn('⚠ .env.local tidak ditemukan, pastikan DATABASE_URL sudah di-set')
+  console.warn('⚠ .env.local tidak ditemukan')
 }
 
 const require = createRequire(import.meta.url)
@@ -36,24 +40,23 @@ const { PrismaClient } = require('@prisma/client')
 
 // ─── KONFIGURASI ────────────────────────────────────────────────────────────
 
-// Email akun yang akan menjadi pemilik data
 const USER_EMAIL = 'wayan.budiastra07@gmail.com'
-const USER_ID    = 'cmo8gr6wg000013555943rxay' // hardcoded, skip DB lookup
+const USER_ID    = 'cmo8gr6wg000013555943rxay'
 
-// Mapping nama kolom CSV → field database
-// Sesuaikan dengan header kolom di file CSV Anda
-const COLUMN_MAP = {
-  bulan:   'Bulan',           // nama kolom untuk bulan (Januari, Februari, dst)
-  tahun:   'Tahun',           // nama kolom untuk tahun (2024, 2025)
-  saham:   'Saham',           // nama kolom untuk kode saham (BBCA, TLKM, dst)
-  dividen: 'Dividen/Lembar',  // nama kolom untuk dividen per lembar (Rp)
-  lot:     'Lot',             // nama kolom untuk jumlah lot
-  total:   'Total',           // nama kolom untuk total dividen (boleh dikosongkan, akan dihitung)
-  keterangan: 'Keterangan',   // nama kolom untuk nama akun sekuritas (STOCKBIT BUDI, IPOT MEI, dst)
-  status:  'Status',          // nama kolom untuk status (DONE / ESTIMASI) — opsional
+// Indeks kolom (0-based), sesuai urutan kolom di sheet:
+// A=0, B=1, C=2, D=3, E=4, F=5, G=6, H=7
+const COL = {
+  bulan:      0,  // A — Bulan
+  tahun:      1,  // B — Tahun
+  saham:      2,  // C — Saham
+  dividen:    3,  // D — Dividen per lembar
+  lot:        4,  // E — Lot
+  total:      5,  // F — Total
+  keterangan: 6,  // G — Keterangan (nama akun sekuritas)
+  status:     7,  // H — Status (DONE / ESTIMASI)
 }
 
-// Separator CSV: ',' untuk standar, ';' untuk export dari Excel Indonesia
+// Separator CSV: ',' standar, ';' untuk Excel Indonesia
 const CSV_SEPARATOR = ','
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -63,14 +66,11 @@ const MONTHS = [
   'Juli','Agustus','September','Oktober','November','Desember',
 ]
 
-function parseCSV(content, sep) {
-  const lines = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n')
-  const headers = lines[0].split(sep).map(h => h.trim().replace(/^"|"$/g, ''))
+function parseCSVNoHeader(content, sep) {
   const rows = []
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i].trim()
+  for (const raw of content.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n')) {
+    const line = raw.trim()
     if (!line) continue
-    // handle quoted fields
     const fields = []
     let inQuote = false, cur = ''
     for (const ch of line + sep) {
@@ -78,17 +78,13 @@ function parseCSV(content, sep) {
       else if (ch === sep && !inQuote) { fields.push(cur.trim()); cur = '' }
       else { cur += ch }
     }
-    if (fields.length !== headers.length) continue
-    const row = {}
-    headers.forEach((h, i) => { row[h] = fields[i] })
-    rows.push(row)
+    rows.push(fields)
   }
   return rows
 }
 
 function cleanNumber(val) {
   if (!val) return 0
-  // hapus "Rp", titik ribuan, spasi, lalu ganti koma desimal → titik
   return parseFloat(
     String(val).replace(/Rp\s*/gi, '').replace(/\./g, '').replace(',', '.').trim()
   ) || 0
@@ -97,8 +93,7 @@ function cleanNumber(val) {
 function normalizeBulan(val) {
   if (!val) return 'Januari'
   const lower = String(val).trim().toLowerCase()
-  const found = MONTHS.find(m => m.toLowerCase() === lower)
-  return found ?? String(val).trim()
+  return MONTHS.find(m => m.toLowerCase() === lower) ?? String(val).trim()
 }
 
 async function main() {
@@ -117,30 +112,32 @@ async function main() {
   const prisma = new PrismaClient()
 
   try {
-    // 1. Gunakan userId langsung (sudah diketahui)
     const userId = USER_ID
     console.log(`\n✓ User: ${USER_EMAIL}`)
     console.log(`  userId: ${userId}`)
 
-    // 2. Load daftar sekuritas user (untuk validasi keterangan)
+    // Load sekuritas untuk validasi keterangan
     console.log(`\nMemuat daftar sekuritas...`)
     const secRows = await prisma.$queryRawUnsafe(
       `SELECT id, nama FROM securities WHERE "userId" = $1`, userId
     )
     const securitiesMap = {}
-    secRows.forEach(s => {
-      // normalize: uppercase, trim
-      securitiesMap[s.nama.toUpperCase().trim()] = s
-    })
+    secRows.forEach(s => { securitiesMap[s.nama.toUpperCase().trim()] = s })
     console.log(`✓ ${secRows.length} sekuritas ditemukan:`)
     secRows.forEach(s => console.log(`   - ${s.nama}`))
 
-    // 3. Parse CSV
+    // Parse CSV (tanpa header)
     const content = fs.readFileSync(fullPath, 'utf-8')
-    const rows = parseCSV(content, CSV_SEPARATOR)
+    const rows = parseCSVNoHeader(content, CSV_SEPARATOR)
     console.log(`\nTotal baris CSV: ${rows.length}`)
 
-    // 4. Ensure dividends table exists
+    // Tampilkan preview 3 baris pertama untuk verifikasi mapping
+    console.log('\nPreview 3 baris pertama:')
+    rows.slice(0, 3).forEach((r, i) => {
+      console.log(`  Baris ${i + 1}: Bulan="${r[COL.bulan]}" | Tahun="${r[COL.tahun]}" | Saham="${r[COL.saham]}" | Dividen="${r[COL.dividen]}" | Lot="${r[COL.lot]}" | Total="${r[COL.total]}" | Ket="${r[COL.keterangan]}" | Status="${r[COL.status]}"`)
+    })
+
+    // Ensure tabel dividends ada
     await prisma.$executeRawUnsafe(`
       CREATE TABLE IF NOT EXISTS "dividends" (
         "id" TEXT NOT NULL PRIMARY KEY,
@@ -158,41 +155,41 @@ async function main() {
       )
     `)
 
-    // 5. Import baris per baris
     let inserted = 0
     let skipped = 0
     const errors = []
 
+    console.log('\nMemproses baris...')
     for (let i = 0; i < rows.length; i++) {
-      const row = rows[i]
-      const rowNum = i + 2 // +2 karena baris 1 = header
+      const fields = rows[i]
+      const rowNum = i + 1
 
-      const rawKet = (row[COLUMN_MAP.keterangan] ?? '').toUpperCase().trim()
-      const rawBulan = normalizeBulan(row[COLUMN_MAP.bulan])
-      const rawTahun = parseInt(row[COLUMN_MAP.tahun]) || 0
-      const rawSaham = (row[COLUMN_MAP.saham] ?? '').toUpperCase().trim()
-      const rawDividen = cleanNumber(row[COLUMN_MAP.dividen])
-      const rawLot = parseInt(cleanNumber(row[COLUMN_MAP.lot])) || 0
-      const rawTotal = cleanNumber(row[COLUMN_MAP.total]) || rawDividen * rawLot * 100
-      const rawStatus = ((row[COLUMN_MAP.status] ?? 'DONE')).toUpperCase().trim()
-      const status = rawStatus === 'DONE' ? 'DONE' : 'ESTIMASI'
+      const rawBulan    = normalizeBulan(fields[COL.bulan])
+      const rawTahun    = parseInt(fields[COL.tahun]) || 0
+      const rawSaham    = (fields[COL.saham] ?? '').toUpperCase().trim()
+      const rawDividen  = cleanNumber(fields[COL.dividen])
+      const rawLot      = parseInt(String(fields[COL.lot]).replace(/[^0-9]/g, '')) || 0
+      const rawTotal    = cleanNumber(fields[COL.total]) || rawDividen * rawLot * 100
+      const rawKet      = (fields[COL.keterangan] ?? '').toUpperCase().trim()
+      const rawStatusRaw = (fields[COL.status] ?? 'DONE').toUpperCase().trim()
+      const status      = rawStatusRaw === 'DONE' ? 'DONE' : 'ESTIMASI'
 
       // Validasi wajib
       if (!rawKet || !rawTahun || !rawSaham) {
         skipped++
-        console.warn(`  ⚠ Baris ${rowNum} dilewati — data tidak lengkap (keterangan/tahun/saham kosong)`)
+        console.warn(`  ⚠ Baris ${rowNum} dilewati — data tidak lengkap`)
         continue
       }
 
-      // Validasi keterangan terhadap securities
+      // Validasi keterangan terhadap sekuritas terdaftar
       if (!securitiesMap[rawKet]) {
-        errors.push(`Baris ${rowNum}: keterangan "${rawKet}" tidak cocok dengan sekuritas terdaftar`)
+        errors.push(`Baris ${rowNum}: "${rawKet}" tidak cocok sekuritas`)
         console.warn(`  ✗ Baris ${rowNum} — keterangan "${rawKet}" tidak ada di daftar sekuritas`)
         skipped++
         continue
       }
 
-      const id = randomUUID()
+      const id  = randomUUID()
       const now = new Date().toISOString()
 
       await prisma.$executeRawUnsafe(
@@ -208,15 +205,16 @@ async function main() {
       console.log(`  ✓ Baris ${rowNum} — ${rawBulan} ${rawTahun} | ${rawSaham} | ${rawKet} | Rp ${rawTotal.toLocaleString('id-ID')} | ${status}`)
     }
 
-    console.log(`\n${'─'.repeat(50)}`)
+    console.log(`\n${'─'.repeat(55)}`)
     console.log(`Import selesai:`)
     console.log(`  ✓ Berhasil diimpor : ${inserted} baris`)
     console.log(`  ⚠ Dilewati        : ${skipped} baris`)
+
     if (errors.length) {
-      console.log(`\nDetail error keterangan tidak cocok:`)
-      errors.forEach(e => console.log(`  - ${e}`))
-      console.log(`\nPastikan nilai kolom Keterangan di CSV cocok (case-insensitive) dengan nama sekuritas berikut:`)
+      console.log(`\nKeterangan tidak cocok — pastikan nama persis sama dengan sekuritas:`)
       secRows.forEach(s => console.log(`  → "${s.nama}"`))
+      console.log(`\nDetail:`)
+      errors.forEach(e => console.log(`  - ${e}`))
     }
 
   } finally {
