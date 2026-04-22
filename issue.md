@@ -135,6 +135,31 @@ Saat ini tab Rekap Chart menampilkan perbandingan antar akun sekuritas secara ke
 
 ---
 
+## ISSUE-006 · Filter ESTIMASI Tidak Menampilkan Semua Data karena Limit API
+
+**Modul:** Rekap Dividen — API & Filter  
+**Prioritas:** Tinggi  
+**Status:** Closed ✅
+
+### Deskripsi
+API GET `/api/dividends` menerapkan `LIMIT 100` untuk semua data tanpa memisahkan status. Akibatnya, jika total data (DONE + ESTIMASI) sudah melebihi 100 baris, data ESTIMASI yang lebih lama bisa tergeser dan tidak dikembalikan oleh API. Filter ESTIMASI di halaman depan menjadi tidak lengkap karena data yang tidak ada di response tidak bisa ditampilkan.
+
+### Root Cause
+Query API mengambil 100 baris teratas berdasarkan `tahun DESC, createdAt DESC` tanpa memisahkan antara data ESTIMASI dan DONE.
+
+### Expected Behavior
+- Data ESTIMASI selalu ditampilkan **semua tanpa limit** — jumlahnya terbatas karena setiap data ESTIMASI akan berubah jadi DONE setelah direalisasi
+- Data DONE dibatasi maksimal **500 baris terbaru** (cukup untuk keperluan rekap chart 5 tahun)
+- Filter ESTIMASI di halaman selalu menampilkan data yang lengkap
+
+### Acceptance Criteria
+- [ ] API menggunakan UNION: semua ESTIMASI + max 500 DONE
+- [ ] Filter status ESTIMASI di halaman menampilkan semua data ESTIMASI tanpa ada yang hilang
+- [ ] Data DONE tetap terbatas agar performa query terjaga
+- [ ] Tidak ada perubahan pada UI — hanya perubahan di query API
+
+---
+
 ## Catatan Umum
 
 - Semua perubahan mengikuti konsep yang sudah ada: PostgreSQL Neon, Prisma raw queries (`$1, $2, ...`), UI style `max-w-7xl`, pagination pattern sama dengan halaman Riwayat Simulasi dan Daftar Sekuritas

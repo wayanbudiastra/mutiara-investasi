@@ -31,8 +31,16 @@ export async function GET(_request: NextRequest) {
 
     await ensureTable()
 
+    // ESTIMASI: semua data tanpa limit (supaya filter selalu lengkap)
+    // DONE: maksimal 500 data terbaru (cukup untuk keperluan rekap)
     const rows = await prisma.$queryRawUnsafe(
-      `SELECT * FROM "dividends" WHERE "userId" = $1 ORDER BY "tahun" DESC, "createdAt" DESC LIMIT 100`,
+      `SELECT * FROM "dividends" WHERE "userId" = $1 AND "status" = 'ESTIMASI'
+       UNION ALL
+       SELECT * FROM (
+         SELECT * FROM "dividends" WHERE "userId" = $1 AND "status" = 'DONE'
+         ORDER BY "tahun" DESC, "createdAt" DESC LIMIT 500
+       ) done_rows
+       ORDER BY "tahun" DESC, "createdAt" DESC`,
       userId
     )
     return NextResponse.json(rows)
