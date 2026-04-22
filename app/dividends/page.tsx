@@ -53,7 +53,8 @@ export default function DividendsPage() {
   const [dividends, setDividends] = useState<Dividend[]>([])
   const [securities, setSecurities] = useState<Security[]>([])
   const [loading, setLoading] = useState(false)
-  const [activeTab, setActiveTab] = useState<'data' | 'rekap'>('data')
+  const [activeTab, setActiveTab] = useState<'data' | 'rekap' | 'sekuritas'>('data')
+  const [selectedRekapKet, setSelectedRekapKet] = useState('')
   const [showModal, setShowModal] = useState(false)
   const [editItem, setEditItem] = useState<Dividend | null>(null)
   const [form, setForm] = useState(emptyForm)
@@ -223,6 +224,23 @@ export default function DividendsPage() {
     return entry
   })
 
+  // Rekap By Sekuritas — computed values
+  const rekapKets = Array.from(new Set(doneDividends.map(d => d.keterangan))).sort()
+  const rekapFiltered = selectedRekapKet
+    ? doneDividends.filter(d => d.keterangan === selectedRekapKet)
+    : []
+  const rekapYears = (Array.from(new Set(rekapFiltered.map(d => d.tahun))).sort() as number[]).slice(-5)
+  const rekapSahams = Array.from(new Set(rekapFiltered.map(d => d.saham))).sort()
+  const rekapTableData = rekapSahams.map(saham => {
+    const entry: Record<string, any> = { saham }
+    rekapYears.forEach(y => {
+      entry[y] = rekapFiltered
+        .filter(d => d.saham === saham && d.tahun === y)
+        .reduce((sum, d) => sum + Number(d.total), 0)
+    })
+    return entry
+  })
+
   const currentYear = new Date().getFullYear()
 
   const totalDone = doneDividends
@@ -278,17 +296,21 @@ export default function DividendsPage() {
         {/* Tabs */}
         <div className="border-b border-gray-200 mb-6">
           <nav className="flex gap-6">
-            {(['data', 'rekap'] as const).map(tab => (
+            {([
+              ['data', 'Data Dividen'],
+              ['rekap', 'Rekap Chart'],
+              ['sekuritas', 'Rekap By Sekuritas'],
+            ] as const).map(([tab, label]) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
-                className={`pb-3 text-sm font-medium border-b-2 transition-colors ${
+                className={`pb-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
                   activeTab === tab
                     ? 'border-indigo-600 text-indigo-600'
                     : 'border-transparent text-gray-500 hover:text-gray-700'
                 }`}
               >
-                {tab === 'data' ? 'Data Dividen' : 'Rekap Chart'}
+                {label}
               </button>
             ))}
           </nav>
@@ -425,6 +447,127 @@ export default function DividendsPage() {
                     </div>
                   </div>
                 )}
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Rekap By Sekuritas Tab */}
+        {activeTab === 'sekuritas' && (
+          <div className="bg-white shadow sm:rounded-lg p-6">
+            {/* Dropdown pilih sekuritas */}
+            <div className="mb-6 flex flex-col sm:flex-row sm:items-center gap-3">
+              <label className="text-sm font-medium text-gray-700 whitespace-nowrap">Pilih Akun Sekuritas:</label>
+              <select
+                value={selectedRekapKet}
+                onChange={e => setSelectedRekapKet(e.target.value)}
+                className="border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-indigo-500 focus:border-indigo-500 w-full sm:w-72"
+              >
+                <option value="">-- Pilih sekuritas --</option>
+                {rekapKets.map(ket => (
+                  <option key={ket} value={ket}>{ket}</option>
+                ))}
+              </select>
+            </div>
+
+            {!selectedRekapKet ? (
+              <div className="py-16 text-center text-gray-400">
+                Pilih sekuritas untuk melihat rekap performa saham
+              </div>
+            ) : rekapFiltered.length === 0 ? (
+              <div className="py-16 text-center text-gray-400">
+                Belum ada data DONE untuk sekuritas ini
+              </div>
+            ) : (
+              <>
+                <h2 className="text-center text-sm font-bold text-gray-700 mb-6 tracking-widest uppercase">
+                  {selectedRekapKet} — Rekap Per Saham
+                </h2>
+
+                {/* Bar Chart */}
+                <div style={{ height: 380 }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={rekapTableData} margin={{ top: 10, right: 20, left: 10, bottom: 30 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                      <XAxis
+                        dataKey="saham"
+                        tick={{ fontSize: 11 }}
+                        label={{ value: 'Kode Saham', position: 'insideBottom', offset: -15, fontSize: 12 }}
+                      />
+                      <YAxis
+                        tickFormatter={v => v === 0 ? 'Rp0' : `Rp${(v / 1_000_000).toFixed(0)}jt`}
+                        tick={{ fontSize: 11 }}
+                        width={65}
+                      />
+                      <Tooltip
+                        formatter={(value: number, name: string) => [
+                          `Rp ${value.toLocaleString('id-ID')}`,
+                          name,
+                        ]}
+                      />
+                      <Legend verticalAlign="top" height={36} />
+                      {rekapYears.map((year, i) => (
+                        <Bar
+                          key={year}
+                          dataKey={year}
+                          name={String(year)}
+                          fill={YEAR_COLORS[i % YEAR_COLORS.length]}
+                        />
+                      ))}
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+
+                {/* Tabel per saham per tahun */}
+                <div className="mt-8 border-t border-gray-200 pt-6">
+                  <h3 className="text-sm font-bold text-gray-700 mb-4 tracking-wide uppercase">
+                    Total Per Saham Per Tahun
+                  </h3>
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-gray-200">
+                          <th className="text-left py-2 pr-6 font-medium text-gray-600">Kode Saham</th>
+                          {rekapYears.map(y => (
+                            <th key={y} className="text-right py-2 px-4 font-medium text-gray-600">{y}</th>
+                          ))}
+                          <th className="text-right py-2 pl-6 font-bold text-gray-800">Total</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rekapTableData.map(row => (
+                          <tr key={row.saham} className="border-b border-gray-100 hover:bg-gray-50">
+                            <td className="py-2 pr-6 font-medium text-gray-900">
+                              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-100 text-indigo-800">
+                                {row.saham}
+                              </span>
+                            </td>
+                            {rekapYears.map(y => (
+                              <td key={y} className="text-right py-2 px-4 text-gray-700">
+                                {row[y] ? rp(row[y]) : <span className="text-gray-300">—</span>}
+                              </td>
+                            ))}
+                            <td className="text-right py-2 pl-6 font-bold text-gray-900">
+                              {rp(rekapYears.reduce((s, y) => s + (row[y] ?? 0), 0))}
+                            </td>
+                          </tr>
+                        ))}
+                        <tr className="bg-gray-50 border-t-2 border-gray-300">
+                          <td className="py-2 pr-6 font-bold text-gray-900">Grand Total</td>
+                          {rekapYears.map(y => (
+                            <td key={y} className="text-right py-2 px-4 font-bold text-gray-900">
+                              {rp(rekapTableData.reduce((s, row) => s + (row[y] ?? 0), 0))}
+                            </td>
+                          ))}
+                          <td className="text-right py-2 pl-6 font-bold text-indigo-700">
+                            {rp(rekapTableData.reduce((s, row) =>
+                              s + rekapYears.reduce((sy, y) => sy + (row[y] ?? 0), 0), 0))}
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               </>
             )}
           </div>

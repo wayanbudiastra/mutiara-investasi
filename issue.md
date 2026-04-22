@@ -106,7 +106,7 @@ Tab Rekap Chart saat ini menampilkan semua tahun yang ada di data dividen (statu
 
 **Modul:** Rekap Dividen — Tab Baru  
 **Prioritas:** Medium  
-**Status:** Open
+**Status:** Closed ✅
 
 ### Deskripsi
 Saat ini tab Rekap Chart menampilkan perbandingan antar akun sekuritas secara keseluruhan. Dibutuhkan tab baru **"Rekap By Sekuritas"** yang memungkinkan user memilih satu akun sekuritas lalu melihat detail performa per saham dan per tahun khusus untuk akun tersebut. Tujuannya agar user bisa mengevaluasi kontribusi tiap saham di masing-masing akun sekuritas dari tahun ke tahun.
