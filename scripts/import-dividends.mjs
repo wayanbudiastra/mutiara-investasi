@@ -13,6 +13,24 @@ import path from 'path'
 import { createRequire } from 'module'
 import { randomUUID } from 'crypto'
 
+// Load .env.local (Next.js tidak otomatis expose ke script Node biasa)
+const envPath = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1')), '../.env.local')
+if (fs.existsSync(envPath)) {
+  const lines = fs.readFileSync(envPath, 'utf-8').split('\n')
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith('#')) continue
+    const eq = trimmed.indexOf('=')
+    if (eq === -1) continue
+    const key = trimmed.slice(0, eq).trim()
+    const val = trimmed.slice(eq + 1).trim().replace(/^['"]|['"]$/g, '')
+    if (!process.env[key]) process.env[key] = val
+  }
+  console.log('✓ .env.local dimuat')
+} else {
+  console.warn('⚠ .env.local tidak ditemukan, pastikan DATABASE_URL sudah di-set')
+}
+
 const require = createRequire(import.meta.url)
 const { PrismaClient } = require('@prisma/client')
 
