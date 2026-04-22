@@ -102,6 +102,39 @@ Tab Rekap Chart saat ini menampilkan semua tahun yang ada di data dividen (statu
 
 ---
 
+## ISSUE-005 · Tab Rekap By Sekuritas
+
+**Modul:** Rekap Dividen — Tab Baru  
+**Prioritas:** Medium  
+**Status:** Open
+
+### Deskripsi
+Saat ini tab Rekap Chart menampilkan perbandingan antar akun sekuritas secara keseluruhan. Dibutuhkan tab baru **"Rekap By Sekuritas"** yang memungkinkan user memilih satu akun sekuritas lalu melihat detail performa per saham dan per tahun khusus untuk akun tersebut. Tujuannya agar user bisa mengevaluasi kontribusi tiap saham di masing-masing akun sekuritas dari tahun ke tahun.
+
+### Expected Behavior
+- Tab baru disisipkan di antara tab **"Rekap Chart"** dan akhir tab list, dengan label **"Rekap By Sekuritas"**
+- Di dalam tab terdapat **dropdown pemilihan sekuritas** (hanya akun yang memiliki data DONE)
+- Setelah sekuritas dipilih, tampil:
+  - **Tabel**: baris = kode saham, kolom = tahun (5 tahun terakhir), kolom terakhir = Total per saham
+  - **Baris Grand Total**: jumlah dividen seluruh saham per tahun dan total keseluruhan
+  - **Bar chart**: sumbu X = kode saham, batang per warna = tahun, hanya 5 tahun terakhir
+- Jika sekuritas belum dipilih, tampilkan placeholder "Pilih sekuritas untuk melihat rekap"
+- Jika sekuritas dipilih tapi tidak ada data, tampilkan "Belum ada data DONE untuk sekuritas ini"
+
+### Acceptance Criteria
+- [ ] Tab "Rekap By Sekuritas" muncul setelah tab "Rekap Chart"
+- [ ] Dropdown hanya menampilkan sekuritas yang memiliki minimal 1 data dengan status DONE
+- [ ] Data yang ditampilkan hanya status DONE (terealisasi)
+- [ ] Tabel mengelompokkan data per `saham` (baris) dan per `tahun` (kolom)
+- [ ] Kolom tahun dibatasi 5 tahun terakhir dari data yang ada (bukan dari tahun berjalan)
+- [ ] Baris Grand Total menjumlahkan seluruh saham per kolom tahun
+- [ ] Bar chart menggunakan komponen Recharts yang sudah ada (`BarChart`, `Bar`, `XAxis`, `YAxis`, `Tooltip`, `Legend`)
+- [ ] Bar chart: sumbu X = kode saham, batang = per tahun (max 5 warna dari `YEAR_COLORS`)
+- [ ] Format angka konsisten menggunakan fungsi `rp()` yang sudah ada
+- [ ] Responsive dan mengikuti style `max-w-7xl` yang sudah digunakan
+
+---
+
 ## Catatan Umum
 
 - Semua perubahan mengikuti konsep yang sudah ada: PostgreSQL Neon, Prisma raw queries (`$1, $2, ...`), UI style `max-w-7xl`, pagination pattern sama dengan halaman Riwayat Simulasi dan Daftar Sekuritas
