@@ -2,6 +2,19 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 
+// Singleton instance — hindari re-instantiate per request
+let _yf: { quote: (symbol: string) => Promise<{ regularMarketPrice?: number }> } | null = null
+
+function getYF() {
+  if (!_yf) {
+    // yahoo-finance2 v3: default export adalah class, harus di-instantiate
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const YFClass = require('yahoo-finance2').default
+    _yf = new YFClass({ suppressNotices: ['yahooSurvey'] })
+  }
+  return _yf!
+}
+
 export async function GET(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions)
@@ -15,18 +28,15 @@ export async function GET(request: NextRequest) {
 
     if (symbols.length === 0) return NextResponse.json({})
 
-    // Dynamic import avoids build-time type resolution issues with yahoo-finance2
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const yf = require('yahoo-finance2').default ?? require('yahoo-finance2')
-
+    const yf = getYF()
     const prices: Record<string, number | null> = {}
 
     await Promise.all(
       symbols.map(async (sym) => {
         try {
-          const result = await yf.quote(`${sym}.JK`)
-          prices[sym] = typeof result?.regularMarketPrice === 'number'
-            ? result.regularMarketPrice
+          const quote = await yf.quote(`${sym}.JK`)
+          prices[sym] = typeof quote?.regularMarketPrice === 'number'
+            ? quote.regularMarketPrice
             : null
         } catch {
           prices[sym] = null
