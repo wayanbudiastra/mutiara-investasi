@@ -314,6 +314,133 @@ updatedAt       TEXT NOT NULL
 
 ---
 
+## ISSUE-008 · Modul Rekap Portofolio — Floating Profit/Loss Berdasarkan Harga Terakhir Yahoo Finance
+
+**Modul:** Rekap Portofolio (Baru)  
+**Prioritas:** Tinggi  
+**Status:** Open
+
+### Deskripsi
+Modul baru **Rekap Portofolio** memungkinkan user menginput kepemilikan saham per akun sekuritas (harga rata-rata beli dan jumlah lot). Setelah data tersimpan, sistem mengambil **harga terakhir secara otomatis** dari Yahoo Finance berdasarkan kode saham, lalu menghitung **nilai pasar** dan **floating profit/loss** secara real-time.
+
+Tujuannya agar user dapat melihat kondisi portofolio aktif di setiap akun sekuritas dalam satu halaman — tanpa perlu cek manual di masing-masing aplikasi broker.
+
+---
+
+### Struktur Data
+
+**Tabel `portfolios`** (raw SQL, pola sama dengan tabel lain)
+```sql
+id           TEXT PRIMARY KEY
+userId       TEXT NOT NULL
+keterangan   TEXT NOT NULL   -- nama akun sekuritas (dari tabel securities)
+saham        TEXT NOT NULL   -- kode saham (BBRI, BBCA, dst)
+hargaRata    DOUBLE PRECISION NOT NULL  -- harga rata-rata beli (per lembar)
+lot          INTEGER NOT NULL
+createdAt    TEXT NOT NULL
+updatedAt    TEXT NOT NULL
+```
+
+> Tidak menyimpan harga terakhir di DB — selalu diambil live dari Yahoo Finance saat halaman dibuka.
+
+---
+
+### Kalkulasi per Baris
+
+| Field | Formula |
+|-------|---------|
+| Modal | `hargaRata × lot × 100` |
+| Harga Terakhir | Live dari Yahoo Finance (`BBRI` → `BBRI.JK`) |
+| Nilai Pasar | `hargaTerakhir × lot × 100` |
+| Floating P/L (Rp) | `Nilai Pasar − Modal` |
+| Floating P/L (%) | `(Floating P/L ÷ Modal) × 100` |
+
+---
+
+### Integrasi Yahoo Finance
+
+- Package: **`yahoo-finance2`** (npm) — library resmi untuk Node.js
+- Suffix saham BEI: tambahkan `.JK` pada kode saham (contoh: `BBRI` → `BBRI.JK`)
+- Field yang digunakan: `quote.regularMarketPrice` (harga terakhir)
+- API internal: `GET /api/portfolio/price?symbol=BBRI` → memanggil yahoo-finance2 server-side
+- Harga diambil **batch per halaman** (satu request per saham unik) saat tab dibuka
+
+---
+
+### Scope Pengerjaan
+
+#### 1. Database
+- Tabel `portfolios` dibuat otomatis via `ensureTable()` (pola sama dengan dividends)
+
+#### 2. API Routes
+
+| Route | Method | Fungsi |
+|-------|--------|--------|
+| `/api/portfolio` | GET | Ambil semua data portofolio user |
+| `/api/portfolio` | POST | Tambah posisi baru |
+| `/api/portfolio/[id]` | PUT | Edit posisi (harga rata, lot) |
+| `/api/portfolio/[id]` | DELETE | Hapus posisi |
+| `/api/portfolio/price` | GET | Ambil harga terakhir dari Yahoo Finance (`?symbols=BBRI,BBCA,BMRI`) |
+
+#### 3. Halaman `/portfolio`
+
+**Form Input (Modal)**
+- Pilih Akun Sekuritas (dropdown dari daftar sekuritas aktif user — searchable combobox)
+- Kode Saham (input teks manual, uppercase)
+- Harga Rata-rata Beli (Rp per lembar)
+- Jumlah Lot
+
+**Tabel Portofolio**
+
+| No | Akun | Saham | Avg Price | Lot | Modal | Harga Terakhir | Nilai Pasar | Floating P/L (Rp) | Floating P/L (%) |
+|----|------|-------|-----------|-----|-------|----------------|-------------|-------------------|-----------------|
+
+- Baris floating profit diberi warna **hijau** jika positif, **merah** jika negatif
+- Loading state saat harga sedang diambil dari Yahoo Finance
+- Tombol **Refresh Harga** untuk memperbarui harga terakhir tanpa reload halaman
+
+**Summary Cards (di atas tabel)**
+- Total Modal Keseluruhan
+- Total Nilai Pasar
+- Total Floating P/L (Rp) — hijau/merah
+- Total Floating P/L (%)
+
+**Filter**
+- Filter per Akun Sekuritas (dropdown)
+- Summary cards menyesuaikan filter aktif
+
+#### 4. Sidebar & Middleware
+- Tambah menu **"Portofolio"** di sidebar (fitur Pro — badge PRO)
+- Tambah `/portfolio` ke `middleware.ts` matcher
+
+---
+
+### Acceptance Criteria
+
+**Database & API:**
+- [ ] Tabel `portfolios` dibuat otomatis saat pertama kali diakses
+- [ ] CRUD portofolio berjalan: tambah, edit, hapus
+- [ ] `GET /api/portfolio/price?symbols=BBRI,BBCA` mengembalikan harga terakhir dari Yahoo Finance
+- [ ] Kode saham BEI otomatis ditambah suffix `.JK` sebelum query ke Yahoo Finance
+- [ ] Jika saham tidak ditemukan di Yahoo Finance, tampilkan `—` di kolom Harga Terakhir
+
+**Halaman:**
+- [ ] Form input menggunakan searchable combobox untuk pilih akun sekuritas
+- [ ] Kalkulasi Modal, Nilai Pasar, Floating P/L benar
+- [ ] Warna baris: hijau jika profit, merah jika loss, abu-abu jika harga tidak tersedia
+- [ ] Summary cards menampilkan total keseluruhan (atau per filter sekuritas)
+- [ ] Tombol Refresh Harga memperbarui harga tanpa reload halaman
+- [ ] Loading state ditampilkan saat fetch harga Yahoo Finance berlangsung
+- [ ] Filter per akun sekuritas berfungsi dan mempengaruhi summary cards
+
+**Teknis:**
+- [ ] `yahoo-finance2` diinstall sebagai dependency
+- [ ] Harga diambil batch (satu request per simbol unik, bukan per baris)
+- [ ] `/portfolio` ditambahkan ke `middleware.ts` matcher
+- [ ] Halaman dilindungi ProGate (fitur Pro)
+
+---
+
 ## Catatan Umum
 
 - Semua perubahan mengikuti konsep yang sudah ada: PostgreSQL Neon, Prisma raw queries (`$1, $2, ...`), UI style `max-w-7xl`, pagination pattern sama dengan halaman Riwayat Simulasi dan Daftar Sekuritas
