@@ -160,6 +160,160 @@ Query API mengambil 100 baris teratas berdasarkan `tahun DESC, createdAt DESC` t
 
 ---
 
+## ISSUE-007 · Fitur Pro — Modul Rekap Dividen di Balik Paywall dengan Pembayaran Midtrans
+
+**Modul:** Subscription / Monetisasi  
+**Prioritas:** Tinggi  
+**Status:** Open
+
+### Deskripsi
+Modul Rekap Dividen (halaman `/dividends` beserta seluruh sub-fiturnya) akan dikunci sebagai fitur berbayar (**Paket Pro**). User yang belum berlangganan akan diarahkan ke halaman pricing. Pembayaran dilakukan melalui **Midtrans Snap** (mendukung kartu Visa/Mastercard, GoPay, QRIS, Transfer Bank, dll).
+
+### Paket Langganan
+
+| Paket | Durasi | Harga |
+|-------|--------|-------|
+| Bulanan | 1 Bulan | Rp 15.000 |
+| Kuartalan | 3 Bulan | Rp 40.000 |
+| Tahunan | 12 Bulan | Rp 100.000 |
+
+### Cakupan Fitur yang Dikunci (Pro)
+- Halaman `/dividends` — seluruh tab (Data Dividen, Rekap Chart, Rekap By Sekuritas)
+- Halaman `/securities` — Daftar Sekuritas (karena berelasi dengan Rekap Dividen)
+
+### Cakupan Fitur yang Tetap Gratis
+- Halaman `/` — Simulasi
+- Halaman `/history` — Riwayat Simulasi
+
+---
+
+### Scope Pengerjaan
+
+#### 1. Database — Tabel Baru
+
+**Tabel `subscriptions`**
+```sql
+id          TEXT PRIMARY KEY
+userId      TEXT NOT NULL
+plan        TEXT NOT NULL  -- 'MONTHLY' | 'QUARTERLY' | 'YEARLY'
+status      TEXT NOT NULL  -- 'ACTIVE' | 'EXPIRED' | 'PENDING'
+startedAt   TEXT NOT NULL
+expiredAt   TEXT NOT NULL
+createdAt   TEXT NOT NULL
+updatedAt   TEXT NOT NULL
+```
+
+**Tabel `payments`**
+```sql
+id              TEXT PRIMARY KEY
+userId          TEXT NOT NULL
+subscriptionId  TEXT NOT NULL
+orderId         TEXT NOT NULL UNIQUE  -- dikirim ke Midtrans
+amount          INTEGER NOT NULL      -- dalam Rupiah
+status          TEXT NOT NULL         -- 'PENDING' | 'PAID' | 'FAILED' | 'EXPIRED'
+midtransToken   TEXT                  -- Snap token dari Midtrans
+midtransTxId    TEXT                  -- transaction_id dari Midtrans
+createdAt       TEXT NOT NULL
+updatedAt       TEXT NOT NULL
+```
+
+---
+
+#### 2. API Routes Baru
+
+| Route | Method | Fungsi |
+|-------|--------|--------|
+| `/api/subscription/status` | GET | Cek status langganan aktif user |
+| `/api/subscription/create` | POST | Buat order baru + ambil Snap token Midtrans |
+| `/api/midtrans/webhook` | POST | Terima notifikasi pembayaran dari Midtrans |
+
+**Logika `/api/subscription/create`:**
+1. Buat record `payments` dengan status `PENDING` dan `orderId` unik (`INV-{userId}-{timestamp}`)
+2. Panggil Midtrans API untuk membuat transaksi dan dapatkan `snap_token`
+3. Return `snap_token` ke client untuk membuka Midtrans Snap popup
+
+**Logika `/api/midtrans/webhook`:**
+1. Verifikasi signature key dari Midtrans
+2. Jika `transaction_status = settlement` atau `capture`: update payment → PAID, aktifkan/perpanjang subscription
+3. Jika `transaction_status = expire` atau `cancel`: update payment → FAILED/EXPIRED
+
+---
+
+#### 3. Halaman Baru
+
+**`/pricing`** — Halaman pilih paket:
+- Tampil 3 card paket (Bulanan, Kuartalan, Tahunan)
+- Highlight paket Tahunan sebagai "Paling Hemat"
+- Tombol "Pilih Paket" membuka Midtrans Snap popup
+- Setelah pembayaran sukses, redirect ke `/dividends`
+
+**`/subscription`** — Halaman status langganan user:
+- Info paket aktif, tanggal mulai, tanggal berakhir
+- Tombol "Perpanjang" jika mendekati expired (< 7 hari)
+- Riwayat pembayaran
+
+---
+
+#### 4. Feature Gating (Proteksi Halaman)
+
+- Buat helper `checkProAccess(userId)` di `lib/subscription.ts`:
+  - Query `subscriptions` WHERE userId = ? AND status = 'ACTIVE' AND expiredAt > now()
+  - Return `{ hasAccess: boolean, expiredAt?: string }`
+
+- Di `app/dividends/page.tsx` dan `app/securities/page.tsx`:
+  - Panggil `/api/subscription/status` saat mount
+  - Jika tidak aktif: tampilkan **Paywall component** (bukan redirect) dengan CTA ke `/pricing`
+
+- Di `components/Sidebar.tsx`:
+  - Tambahkan badge **PRO** pada menu "Rekap Dividen" dan "Daftar Sekuritas"
+  - Jika user tidak punya langganan aktif, tampilkan icon gembok kecil
+
+---
+
+#### 5. Komponen UI Baru
+
+- `components/ProGate.tsx` — Wrapper paywall:
+  - Tampil ketika user belum Pro
+  - Pesan: "Fitur ini tersedia untuk pengguna Pro"
+  - Info harga singkat + tombol "Upgrade ke Pro"
+
+- `components/PricingCard.tsx` — Card paket harga
+
+---
+
+### Acceptance Criteria
+
+**Database & API:**
+- [ ] Tabel `subscriptions` dan `payments` berhasil dibuat (raw SQL, konsisten dengan pola project)
+- [ ] `POST /api/subscription/create` mengembalikan Midtrans Snap token
+- [ ] `POST /api/midtrans/webhook` memverifikasi signature dan mengaktifkan subscription setelah pembayaran sukses
+- [ ] `GET /api/subscription/status` mengembalikan status aktif/tidak beserta tanggal expired
+
+**Halaman Pricing:**
+- [ ] Menampilkan 3 pilihan paket dengan harga yang benar
+- [ ] Midtrans Snap popup terbuka saat tombol "Pilih Paket" diklik
+- [ ] Setelah pembayaran berhasil, subscription aktif dan user bisa akses Rekap Dividen
+
+**Feature Gating:**
+- [ ] `/dividends` menampilkan ProGate jika subscription tidak aktif
+- [ ] `/securities` menampilkan ProGate jika subscription tidak aktif
+- [ ] Sidebar menampilkan badge PRO dan/atau icon gembok pada menu yang dikunci
+
+**Keamanan:**
+- [ ] Webhook Midtrans memverifikasi signature key sebelum memproses
+- [ ] Status subscription dicek di sisi server (tidak hanya client-side)
+
+---
+
+### Catatan Teknis
+- Gunakan **Midtrans Snap.js** (client-side) untuk popup pembayaran
+- Midtrans environment: Sandbox untuk dev, Production untuk live
+- `orderId` harus unik per transaksi — gunakan format `INV-{userId}-{Date.now()}`
+- Perpanjang subscription: `expiredAt` dihitung dari `expiredAt` lama jika masih aktif, atau dari `now()` jika sudah expired
+- Midtrans Snap docs: https://snap-docs.midtrans.com
+
+---
+
 ## Catatan Umum
 
 - Semua perubahan mengikuti konsep yang sudah ada: PostgreSQL Neon, Prisma raw queries (`$1, $2, ...`), UI style `max-w-7xl`, pagination pattern sama dengan halaman Riwayat Simulasi dan Daftar Sekuritas
