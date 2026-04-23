@@ -1,5 +1,9 @@
 import { prisma } from './prisma'
 
+// Set PRO_ENABLED=false di .env.local untuk membuka semua fitur gratis (mode free)
+// Set PRO_ENABLED=true untuk mengaktifkan paywall
+const PRO_ENABLED = process.env.PRO_ENABLED === 'true'
+
 const ADMIN_IDS = (process.env.ADMIN_USER_IDS ?? '')
   .split(',').map(s => s.trim()).filter(Boolean)
 
@@ -38,6 +42,13 @@ export type ProAccessResult =
   | { hasAccess: false; isAdmin: false; expiredAt?: undefined }
 
 export async function checkProAccess(userId: string): Promise<ProAccessResult> {
+  // Mode free: semua user mendapat akses tanpa perlu berlangganan
+  if (!PRO_ENABLED) {
+    return ADMIN_IDS.includes(userId)
+      ? { hasAccess: true, isAdmin: true }
+      : { hasAccess: true, isAdmin: false, expiredAt: '2099-12-31T00:00:00.000Z' }
+  }
+
   if (ADMIN_IDS.includes(userId)) {
     return { hasAccess: true, isAdmin: true }
   }
