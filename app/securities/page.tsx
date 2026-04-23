@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
+import { ProGate } from '@/components/ProGate'
 
 type Security = {
   id: string
@@ -27,6 +28,7 @@ export default function SecuritiesPage() {
   const { data: session, status: authStatus } = useSession()
   const router = useRouter()
 
+  const [proAccess, setProAccess] = useState<{ hasAccess: boolean } | null>(null)
   const [data, setData] = useState<ApiResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -137,7 +139,14 @@ export default function SecuritiesPage() {
     }
   }
 
-  if (authStatus === 'loading') return null
+  useEffect(() => {
+    if (authStatus === 'authenticated') {
+      fetch('/api/subscription/status').then(r => r.json()).then(setProAccess)
+    }
+  }, [authStatus])
+
+  if (authStatus === 'loading' || proAccess === null) return null
+  if (!proAccess.hasAccess) return <ProGate />
 
   return (
     <div className="min-h-screen bg-gray-50 py-8">

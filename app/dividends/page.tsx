@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from 'recharts'
+import { ProGate } from '@/components/ProGate'
 
 const MONTHS = [
   'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
@@ -50,6 +51,7 @@ export default function DividendsPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
 
+  const [proAccess, setProAccess] = useState<{ hasAccess: boolean; isAdmin: boolean } | null>(null)
   const [dividends, setDividends] = useState<Dividend[]>([])
   const [securities, setSecurities] = useState<Security[]>([])
   const [loading, setLoading] = useState(false)
@@ -105,6 +107,7 @@ export default function DividendsPage() {
 
   useEffect(() => {
     if (status === 'authenticated') {
+      fetch('/api/subscription/status').then(r => r.json()).then(setProAccess)
       fetchDividends()
       const userId = (session?.user as any)?.id
       if (userId) fetchSecurities(userId)
@@ -252,7 +255,8 @@ export default function DividendsPage() {
 
   const rp = (v: number) => `Rp ${v.toLocaleString('id-ID')}`
 
-  if (status === 'loading') return null
+  if (status === 'loading' || proAccess === null) return null
+  if (!proAccess.hasAccess) return <ProGate />
 
   const canSave = !!(form.saham && form.dividen && form.lot && form.keterangan)
 
