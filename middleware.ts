@@ -1,7 +1,7 @@
 import { withAuth } from 'next-auth/middleware'
 
 export default withAuth(
-  function middleware(req) {
+  function middleware(_req) {
     // Add custom middleware logic here if needed
   },
   {
@@ -12,5 +12,5 @@ export default withAuth(
 )
 
 export const config = {
-  matcher: ['/', '/history', '/profile', '/api/calculations', '/api/profile', '/api/watchlist'],
+  matcher: ['/', '/history', '/profile', '/portfolio', '/dividends', '/securities', '/pricing', '/subscription', '/api/calculations', '/api/profile', '/api/watchlist', '/api/portfolio', '/api/subscription'],
 }
