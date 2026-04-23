@@ -20,31 +20,32 @@ interface Security {
   status: string
 }
 
-const emptyForm = { keterangan: '', saham: '', hargaRata: '', lot: '' }
+const emptyForm = { saham: '', hargaRata: '', lot: '' }
 
-const rp = (v: number) => `Rp ${v.toLocaleString('id-ID')}`
+const rp  = (v: number) => `Rp ${v.toLocaleString('id-ID')}`
 const pct = (v: number) => `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`
 
 export default function PortfolioPage() {
   const { data: session, status } = useSession()
   const router = useRouter()
 
-  const [proAccess, setProAccess]     = useState<{ hasAccess: boolean } | null>(null)
-  const [rows, setRows]               = useState<PortfolioRow[]>([])
-  const [prices, setPrices]           = useState<Record<string, number | null>>({})
-  const [loadingData, setLoadingData] = useState(false)
+  const [proAccess, setProAccess]       = useState<{ hasAccess: boolean } | null>(null)
+  const [rows, setRows]                 = useState<PortfolioRow[]>([])
+  const [prices, setPrices]             = useState<Record<string, number | null>>({})
+  const [loadingData, setLoadingData]   = useState(false)
   const [loadingPrice, setLoadingPrice] = useState(false)
-  const [securities, setSecurities]   = useState<Security[]>([])
-  const [filterKet, setFilterKet]     = useState('')
+  const [securities, setSecurities]     = useState<Security[]>([])
+  const [filterKet, setFilterKet]       = useState('')
 
-  const [showModal, setShowModal]     = useState(false)
-  const [editItem, setEditItem]       = useState<PortfolioRow | null>(null)
-  const [form, setForm]               = useState(emptyForm)
-  const [saving, setSaving]           = useState(false)
-  const [deletingId, setDeletingId]   = useState<string | null>(null)
+  const [showModal, setShowModal]   = useState(false)
+  const [editItem, setEditItem]     = useState<PortfolioRow | null>(null)
+  const [form, setForm]             = useState(emptyForm)
+  const [saving, setSaving]         = useState(false)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
 
-  // searchable combobox states
-  const [secSearch, setSecSearch]         = useState('')
+  // Sekuritas combobox
+  const [selectedSecId, setSelectedSecId]     = useState('')
+  const [secSearch, setSecSearch]             = useState('')
   const [secDropdownOpen, setSecDropdownOpen] = useState(false)
 
   useEffect(() => {
@@ -74,12 +75,14 @@ export default function PortfolioPage() {
   }, [])
 
   const fetchSecurities = useCallback(async (userId: string) => {
-    const res = await fetch(`/api/securities?userId=${userId}&limit=100`)
-    if (res.ok) {
-      const json = await res.json()
-      const list: Security[] = json.securities ?? json
-      setSecurities(list.filter(s => s.status === 'ACTIVE'))
-    }
+    try {
+      const res = await fetch(`/api/securities?userId=${userId}&limit=100`)
+      if (res.ok) {
+        const json = await res.json()
+        const list: Security[] = json.securities ?? json
+        setSecurities(list.filter(s => s.status === 'ACTIVE'))
+      }
+    } catch { /* silently fail */ }
   }, [])
 
   useEffect(() => {
@@ -94,35 +97,62 @@ export default function PortfolioPage() {
     if (rows.length > 0) fetchPrices(rows)
   }, [rows, fetchPrices])
 
-  const handleRefresh = () => fetchPrices(rows)
+  // ── Modal helpers ──────────────────────────────────────────────────────────
+
+  const resetModal = () => {
+    setSelectedSecId('')
+    setSecSearch('')
+    setSecDropdownOpen(false)
+  }
 
   const openAdd = () => {
     setEditItem(null)
     setForm(emptyForm)
-    setSecSearch('')
-    setSecDropdownOpen(false)
+    resetModal()
     setShowModal(true)
   }
 
   const openEdit = (row: PortfolioRow) => {
     setEditItem(row)
-    setForm({ keterangan: row.keterangan, saham: row.saham, hargaRata: String(row.hargaRata), lot: String(row.lot) })
+    setForm({ saham: row.saham, hargaRata: String(row.hargaRata), lot: String(row.lot) })
+    // pre-select: cocokkan keterangan (uppercase) dengan s.nama (uppercase)
+    const match = securities.find(s => s.nama.toUpperCase().trim() === row.keterangan)
+    setSelectedSecId(match?.id ?? '')
     setSecSearch('')
     setSecDropdownOpen(false)
     setShowModal(true)
   }
 
-  const closeModal = () => { setShowModal(false); setEditItem(null) }
+  const closeModal = () => {
+    setShowModal(false)
+    setEditItem(null)
+    resetModal()
+  }
+
+  const handleSecSelect = (sec: Security) => {
+    setSelectedSecId(sec.id)
+    setSecDropdownOpen(false)
+    setSecSearch('')
+  }
+
+  // ── Save / Delete ──────────────────────────────────────────────────────────
+
+  const selectedSec = securities.find(s => s.id === selectedSecId)
 
   const handleSave = async () => {
-    if (!form.keterangan || !form.saham || !form.hargaRata || !form.lot) return
+    if (!selectedSecId || !form.saham || !form.hargaRata || !form.lot) return
     setSaving(true)
     try {
-      const payload = { keterangan: form.keterangan, saham: form.saham, hargaRata: parseFloat(form.hargaRata), lot: parseInt(form.lot) }
+      const payload = {
+        keterangan: selectedSec!.nama,
+        saham:      form.saham,
+        hargaRata:  parseFloat(form.hargaRata),
+        lot:        parseInt(form.lot),
+      }
       const res = await fetch(editItem ? `/api/portfolio/${editItem.id}` : '/api/portfolio', {
-        method: editItem ? 'PUT' : 'POST',
+        method:  editItem ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body:    JSON.stringify(payload),
       })
       if (res.ok) { closeModal(); await fetchPortfolio() }
     } finally { setSaving(false) }
@@ -137,31 +167,32 @@ export default function PortfolioPage() {
     } finally { setDeletingId(null) }
   }
 
+  // ── Render guard ───────────────────────────────────────────────────────────
+
   if (status === 'loading' || proAccess === null) return null
   if (!proAccess.hasAccess) return <ProGate />
 
-  // Filter
-  const keterangans = Array.from(new Set(rows.map(r => r.keterangan))).sort()
-  const filtered = filterKet ? rows.filter(r => r.keterangan === filterKet) : rows
+  // ── Derived data ───────────────────────────────────────────────────────────
 
-  // Calculations per row
+  const keterangans  = Array.from(new Set(rows.map(r => r.keterangan))).sort()
+  const filtered     = filterKet ? rows.filter(r => r.keterangan === filterKet) : rows
+
   const calc = (row: PortfolioRow) => {
-    const modal       = row.hargaRata * row.lot * 100
-    const hargaAkhir  = prices[row.saham]
-    const nilaiPasar  = hargaAkhir != null ? hargaAkhir * row.lot * 100 : null
-    const floatRp     = nilaiPasar != null ? nilaiPasar - modal : null
-    const floatPct    = floatRp != null && modal > 0 ? (floatRp / modal) * 100 : null
+    const modal      = row.hargaRata * row.lot * 100
+    const hargaAkhir = prices[row.saham]
+    const nilaiPasar = hargaAkhir != null ? hargaAkhir * row.lot * 100 : null
+    const floatRp    = nilaiPasar != null ? nilaiPasar - modal : null
+    const floatPct   = floatRp != null && modal > 0 ? (floatRp / modal) * 100 : null
     return { modal, hargaAkhir, nilaiPasar, floatRp, floatPct }
   }
 
-  // Summary totals
   const totalModal      = filtered.reduce((s, r) => s + r.hargaRata * r.lot * 100, 0)
   const totalNilaiPasar = filtered.reduce((s, r) => {
     const h = prices[r.saham]; return h != null ? s + h * r.lot * 100 : s
   }, 0)
   const totalFloatRp  = totalNilaiPasar - totalModal
   const totalFloatPct = totalModal > 0 ? (totalFloatRp / totalModal) * 100 : 0
-  const hasAllPrices  = filtered.every(r => prices[r.saham] != null)
+  const hasAllPrices  = filtered.length > 0 && filtered.every(r => prices[r.saham] != null)
 
   const floatColor = (v: number | null) =>
     v == null ? 'text-gray-400' : v > 0 ? 'text-green-600' : v < 0 ? 'text-red-600' : 'text-gray-600'
@@ -169,7 +200,9 @@ export default function PortfolioPage() {
   const rowBg = (v: number | null) =>
     v == null ? '' : v > 0 ? 'bg-green-50 hover:bg-green-100' : v < 0 ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-gray-50'
 
-  const canSave = !!(form.keterangan && form.saham && form.hargaRata && form.lot)
+  const canSave = !!(selectedSecId && form.saham && form.hargaRata && form.lot)
+
+  // ── JSX ────────────────────────────────────────────────────────────────────
 
   return (
     <div className="min-h-screen bg-gray-50 py-8">
@@ -183,12 +216,13 @@ export default function PortfolioPage() {
           </div>
           <div className="flex items-center gap-3">
             <button
-              onClick={handleRefresh}
+              onClick={() => fetchPrices(rows)}
               disabled={loadingPrice || rows.length === 0}
               className="inline-flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 text-gray-700 text-sm font-medium rounded-md hover:bg-gray-50 disabled:opacity-50"
             >
               <svg className={`w-4 h-4 ${loadingPrice ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
               </svg>
               {loadingPrice ? 'Memperbarui...' : 'Refresh Harga'}
             </button>
@@ -206,28 +240,19 @@ export default function PortfolioPage() {
 
         {/* Summary Cards */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
-          <div className="bg-white rounded-lg shadow p-4">
-            <p className="text-xs text-gray-500 mb-1">Total Modal</p>
-            <p className="text-lg font-bold text-gray-900">{rp(totalModal)}</p>
-          </div>
-          <div className="bg-white rounded-lg shadow p-4">
-            <p className="text-xs text-gray-500 mb-1">Total Nilai Pasar</p>
-            <p className="text-lg font-bold text-gray-900">
-              {hasAllPrices && filtered.length > 0 ? rp(totalNilaiPasar) : <span className="text-gray-400 text-sm">Memuat...</span>}
-            </p>
-          </div>
-          <div className="bg-white rounded-lg shadow p-4">
-            <p className="text-xs text-gray-500 mb-1">Floating P/L</p>
-            <p className={`text-lg font-bold ${floatColor(hasAllPrices && filtered.length > 0 ? totalFloatRp : null)}`}>
-              {hasAllPrices && filtered.length > 0 ? rp(totalFloatRp) : <span className="text-gray-400 text-sm">—</span>}
-            </p>
-          </div>
-          <div className="bg-white rounded-lg shadow p-4">
-            <p className="text-xs text-gray-500 mb-1">Floating P/L (%)</p>
-            <p className={`text-lg font-bold ${floatColor(hasAllPrices && filtered.length > 0 ? totalFloatPct : null)}`}>
-              {hasAllPrices && filtered.length > 0 ? pct(totalFloatPct) : <span className="text-gray-400 text-sm">—</span>}
-            </p>
-          </div>
+          {[
+            { label: 'Total Modal',      val: rp(totalModal),      color: 'text-gray-900',           show: true },
+            { label: 'Total Nilai Pasar', val: rp(totalNilaiPasar), color: 'text-gray-900',           show: hasAllPrices },
+            { label: 'Floating P/L',      val: rp(totalFloatRp),    color: floatColor(hasAllPrices ? totalFloatRp : null), show: hasAllPrices },
+            { label: 'Floating P/L (%)',  val: pct(totalFloatPct),  color: floatColor(hasAllPrices ? totalFloatPct : null), show: hasAllPrices },
+          ].map(c => (
+            <div key={c.label} className="bg-white rounded-lg shadow p-4">
+              <p className="text-xs text-gray-500 mb-1">{c.label}</p>
+              <p className={`text-lg font-bold ${c.color}`}>
+                {c.show ? c.val : <span className="text-gray-400 text-sm">—</span>}
+              </p>
+            </div>
+          ))}
         </div>
 
         {/* Filter */}
@@ -241,7 +266,8 @@ export default function PortfolioPage() {
             {keterangans.map(k => <option key={k} value={k}>{k}</option>)}
           </select>
           {filterKet && (
-            <button onClick={() => setFilterKet('')} className="px-3 py-1.5 bg-gray-100 text-gray-600 text-sm rounded-md hover:bg-gray-200">
+            <button onClick={() => setFilterKet('')}
+              className="px-3 py-1.5 bg-gray-100 text-gray-600 text-sm rounded-md hover:bg-gray-200">
               Reset
             </button>
           )}
@@ -254,14 +280,15 @@ export default function PortfolioPage() {
             <div className="p-12 text-center text-gray-500">Memuat data...</div>
           ) : filtered.length === 0 ? (
             <div className="p-12 text-center text-gray-500">
-              Belum ada posisi. Klik <span className="font-semibold text-indigo-600">Tambah Posisi</span> untuk mulai.
+              Belum ada posisi. Klik{' '}
+              <span className="font-semibold text-indigo-600">Tambah Posisi</span> untuk mulai.
             </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200 text-sm">
                 <thead className="bg-gray-50">
                   <tr>
-                    {['No', 'Akun Sekuritas', 'Saham', 'Avg Price', 'Lot', 'Modal', 'Harga Terakhir', 'Nilai Pasar', 'Floating P/L (Rp)', 'Floating P/L (%)', 'Aksi'].map(h => (
+                    {['No','Akun Sekuritas','Saham','Avg Price','Lot','Modal','Harga Terakhir','Nilai Pasar','Floating P/L (Rp)','Floating P/L (%)','Aksi'].map(h => (
                       <th key={h} className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
@@ -283,10 +310,9 @@ export default function PortfolioPage() {
                         <td className="px-4 py-3 text-gray-900 whitespace-nowrap">{rp(modal)}</td>
                         <td className="px-4 py-3 whitespace-nowrap">
                           {loadingPrice
-                            ? <span className="text-gray-400">...</span>
-                            : hargaAkhir != null
-                              ? rp(hargaAkhir)
-                              : <span className="text-gray-400">—</span>}
+                            ? <span className="text-gray-400 text-xs">memuat...</span>
+                            : hargaAkhir != null ? rp(hargaAkhir)
+                            : <span className="text-gray-400">—</span>}
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap">
                           {nilaiPasar != null ? rp(nilaiPasar) : <span className="text-gray-400">—</span>}
@@ -299,12 +325,12 @@ export default function PortfolioPage() {
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-3">
-                            <button onClick={() => openEdit(row)} className="text-xs text-indigo-600 hover:text-indigo-800 font-medium">Edit</button>
+                            <button onClick={() => openEdit(row)}
+                              className="text-xs text-indigo-600 hover:text-indigo-800 font-medium">Edit</button>
                             <button
                               onClick={() => handleDelete(row.id)}
                               disabled={deletingId === row.id}
-                              className="text-xs text-red-600 hover:text-red-800 disabled:opacity-50"
-                            >
+                              className="text-xs text-red-600 hover:text-red-800 disabled:opacity-50">
                               {deletingId === row.id ? '...' : 'Hapus'}
                             </button>
                           </div>
@@ -337,25 +363,40 @@ export default function PortfolioPage() {
 
             <div className="space-y-4">
 
-              {/* Akun Sekuritas — searchable combobox */}
+              {/* Akun Sekuritas — searchable combobox dari tabel securities */}
               <div>
                 <label className="block text-xs font-medium text-gray-700 mb-1">
                   Akun Sekuritas <span className="text-red-500">*</span>
                 </label>
-                {securities.length > 0 ? (
+
+                {securities.length === 0 ? (
+                  <div className="rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
+                    Belum ada sekuritas aktif.{' '}
+                    <a href="/securities" className="font-semibold underline hover:text-amber-900">
+                      Daftarkan sekuritas
+                    </a>{' '}
+                    terlebih dahulu.
+                  </div>
+                ) : (
                   <div className="relative">
+                    {/* Trigger */}
                     <button
                       type="button"
                       onClick={() => setSecDropdownOpen(o => !o)}
-                      className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-left flex items-center justify-between focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-left flex items-center justify-between focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500"
                     >
-                      <span className={form.keterangan ? 'text-gray-900' : 'text-gray-400'}>
-                        {form.keterangan || '-- Pilih Akun Sekuritas --'}
+                      <span className={selectedSecId ? 'text-gray-900' : 'text-gray-400'}>
+                        {selectedSecId
+                          ? securities.find(s => s.id === selectedSecId)?.nama
+                          : '-- Pilih Akun Sekuritas --'}
                       </span>
-                      <svg className={`w-4 h-4 text-gray-400 transition-transform ${secDropdownOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg className={`w-4 h-4 text-gray-400 transition-transform ${secDropdownOpen ? 'rotate-180' : ''}`}
+                        fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                       </svg>
                     </button>
+
+                    {/* Dropdown */}
                     {secDropdownOpen && (
                       <>
                         <div className="absolute z-50 mt-1 w-full bg-white border border-gray-200 rounded-md shadow-lg">
@@ -371,14 +412,16 @@ export default function PortfolioPage() {
                           </div>
                           <ul className="max-h-48 overflow-y-auto">
                             {securities.filter(s => s.nama.toLowerCase().includes(secSearch.toLowerCase())).length === 0 ? (
-                              <li className="px-3 py-2 text-sm text-gray-400 text-center">Tidak ditemukan</li>
+                              <li className="px-3 py-2 text-sm text-gray-400 text-center">Sekuritas tidak ditemukan</li>
                             ) : (
                               securities
                                 .filter(s => s.nama.toLowerCase().includes(secSearch.toLowerCase()))
                                 .map(s => (
                                   <li key={s.id}
-                                    onClick={() => { setForm(f => ({ ...f, keterangan: s.nama })); setSecDropdownOpen(false); setSecSearch('') }}
-                                    className={`px-3 py-2 text-sm cursor-pointer hover:bg-indigo-50 hover:text-indigo-700 ${form.keterangan === s.nama ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-900'}`}
+                                    onClick={() => handleSecSelect(s)}
+                                    className={`px-3 py-2 text-sm cursor-pointer hover:bg-indigo-50 hover:text-indigo-700 ${
+                                      selectedSecId === s.id ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-900'
+                                    }`}
                                   >
                                     {s.nama}
                                   </li>
@@ -386,18 +429,11 @@ export default function PortfolioPage() {
                             )}
                           </ul>
                         </div>
-                        <div className="fixed inset-0 z-40" onClick={() => { setSecDropdownOpen(false); setSecSearch('') }} />
+                        <div className="fixed inset-0 z-40"
+                          onClick={() => { setSecDropdownOpen(false); setSecSearch('') }} />
                       </>
                     )}
                   </div>
-                ) : (
-                  <input
-                    type="text"
-                    value={form.keterangan}
-                    onChange={e => setForm(f => ({ ...f, keterangan: e.target.value.toUpperCase() }))}
-                    placeholder="Nama akun sekuritas"
-                    className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-indigo-500 focus:border-indigo-500"
-                  />
                 )}
               </div>
 
@@ -413,7 +449,7 @@ export default function PortfolioPage() {
                   placeholder="cth: BBRI"
                   className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-indigo-500 focus:border-indigo-500"
                 />
-                <p className="text-xs text-gray-400 mt-0.5">Kode BEI — otomatis ditambah .JK saat cek harga</p>
+                <p className="text-xs text-gray-400 mt-0.5">Kode BEI — otomatis tambah .JK saat cek harga</p>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
@@ -446,7 +482,8 @@ export default function PortfolioPage() {
               {/* Preview modal */}
               {form.hargaRata && form.lot && (
                 <div className="rounded-md bg-gray-50 border border-gray-200 px-3 py-2 text-xs text-gray-600">
-                  Modal: <span className="font-semibold text-gray-900">
+                  Modal:{' '}
+                  <span className="font-semibold text-gray-900">
                     {rp(parseFloat(form.hargaRata || '0') * parseInt(form.lot || '0') * 100)}
                   </span>
                 </div>
@@ -454,7 +491,8 @@ export default function PortfolioPage() {
             </div>
 
             <div className="mt-6 flex gap-3 justify-end">
-              <button onClick={closeModal} className="px-4 py-2 text-sm font-medium text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50">
+              <button onClick={closeModal}
+                className="px-4 py-2 text-sm font-medium text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50">
                 Batal
               </button>
               <button
