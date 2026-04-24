@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, Suspense } from 'react'
 import { useSession } from 'next-auth/react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import {
@@ -46,7 +46,7 @@ const emptyForm = {
   status: 'ESTIMASI' as 'ESTIMASI' | 'DONE',
 }
 
-export default function DividendsPage() {
+function DividendsContent() {
   const { data: session, status } = useSession()
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -883,5 +883,13 @@ export default function DividendsPage() {
         </div>
       )}
     </div>
+  )
+}
+
+export default function DividendsPage() {
+  return (
+    <Suspense fallback={null}>
+      <DividendsContent />
+    </Suspense>
   )
 }
