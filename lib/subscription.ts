@@ -73,7 +73,7 @@ export async function checkProAccess(userId: string): Promise<ProAccessResult> {
 export const PLANS = [
   { id: 'MONTHLY',   label: 'Bulanan',   months: 1,  price: 15000,  priceLabel: 'Rp 15.000' },
   { id: 'QUARTERLY', label: 'Kuartalan', months: 3,  price: 35000,  priceLabel: 'Rp 35.000' },
-  { id: 'SEMESTER',  label: 'Semester',  months: 6,  price: 50000,  priceLabel: 'Rp 50.000' },
+  { id: 'SEMESTER',  label: 'Semester',  months: 6,  price: 55000,  priceLabel: 'Rp 55.000' },
   { id: 'YEARLY',    label: 'Tahunan',   months: 12, price: 100000, priceLabel: 'Rp 100.000' },
 ] as const
 

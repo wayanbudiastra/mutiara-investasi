@@ -33,7 +33,7 @@ export function ProGate() {
           {[
             { label: 'Bulanan',   price: 'Rp 15.000', sub: '/ bulan' },
             { label: 'Kuartalan', price: 'Rp 35.000', sub: '/ 3 bulan' },
-            { label: 'Semester',  price: 'Rp 50.000', sub: '/ 6 bulan' },
+            { label: 'Semester',  price: 'Rp 55.000', sub: '/ 6 bulan' },
             { label: 'Tahunan',   price: 'Rp 100.000', sub: '/ tahun', highlight: true },
           ].map(p => (
             <div
