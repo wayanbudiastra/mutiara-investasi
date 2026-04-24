@@ -29,11 +29,12 @@ export function ProGate() {
         </p>
 
         {/* Plans preview */}
-        <div className="grid grid-cols-3 gap-3 mb-8">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">
           {[
-            { label: 'Bulanan', price: 'Rp 15.000', sub: '/ bulan' },
-            { label: 'Kuartalan', price: 'Rp 40.000', sub: '/ 3 bulan', highlight: true },
-            { label: 'Tahunan', price: 'Rp 100.000', sub: '/ tahun' },
+            { label: 'Bulanan',   price: 'Rp 10.000', sub: '/ bulan' },
+            { label: 'Kuartalan', price: 'Rp 30.000', sub: '/ 3 bulan' },
+            { label: 'Semester',  price: 'Rp 50.000', sub: '/ 6 bulan' },
+            { label: 'Tahunan',   price: 'Rp 100.000', sub: '/ tahun', highlight: true },
           ].map(p => (
             <div
               key={p.label}
