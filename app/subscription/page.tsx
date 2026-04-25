@@ -11,10 +11,33 @@ interface StatusData {
   expiredAt?: string
 }
 
+interface PaymentRow {
+  orderId: string
+  amount: number
+  status: string
+  midtransTxId: string | null
+  createdAt: string
+  plan: string
+  expiredAt: string
+}
+
+const PLAN_LABELS: Record<string, string> = {
+  MONTHLY: 'Bulanan', QUARTERLY: 'Kuartalan', SEMESTER: 'Semester', YEARLY: 'Tahunan',
+}
+
+const STATUS_STYLE: Record<string, string> = {
+  PAID:    'bg-green-100 text-green-800',
+  PENDING: 'bg-yellow-100 text-yellow-800',
+  FAILED:  'bg-red-100 text-red-800',
+}
+
+const rp = (v: number) => `Rp ${v.toLocaleString('id-ID')}`
+
 export default function SubscriptionPage() {
   const { status } = useSession()
   const router = useRouter()
-  const [data, setData] = useState<StatusData | null>(null)
+  const [data, setData]       = useState<StatusData | null>(null)
+  const [history, setHistory] = useState<PaymentRow[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -23,10 +46,13 @@ export default function SubscriptionPage() {
 
   useEffect(() => {
     if (status !== 'authenticated') return
-    fetch('/api/subscription/status')
-      .then(r => r.json())
-      .then(setData)
-      .finally(() => setLoading(false))
+    Promise.all([
+      fetch('/api/subscription/status').then(r => r.json()),
+      fetch('/api/payment/history').then(r => r.json()),
+    ]).then(([statusData, historyData]) => {
+      setData(statusData)
+      setHistory(Array.isArray(historyData) ? historyData : [])
+    }).finally(() => setLoading(false))
   }, [status])
 
   if (status === 'loading' || loading) return null
@@ -35,9 +61,7 @@ export default function SubscriptionPage() {
   const isAdmin  = data?.isAdmin
 
   const expiredDate = data?.expiredAt
-    ? new Date(data.expiredAt).toLocaleDateString('id-ID', {
-        day: 'numeric', month: 'long', year: 'numeric'
-      })
+    ? new Date(data.expiredAt).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })
     : null
 
   const daysLeft = data?.expiredAt
@@ -46,11 +70,11 @@ export default function SubscriptionPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 py-10">
-      <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
 
         <div className="mb-8">
           <h1 className="text-2xl font-bold text-gray-900">Status Langganan</h1>
-          <p className="mt-1 text-sm text-gray-500">Kelola paket Pro Anda</p>
+          <p className="mt-1 text-sm text-gray-500">Kelola paket Pro dan riwayat pembayaran Anda</p>
         </div>
 
         {/* Status card */}
@@ -111,15 +135,15 @@ export default function SubscriptionPage() {
 
         {/* CTA */}
         {!isAdmin && (
-          <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
             <div>
               <p className="text-sm font-semibold text-indigo-900">
                 {isActive ? 'Perpanjang Langganan' : 'Mulai Berlangganan'}
               </p>
               <p className="text-xs text-indigo-700 mt-0.5">
                 {isActive
-                  ? 'Perpanjang sebelum masa aktif habis agar tidak terputus'
-                  : 'Pilih paket yang sesuai, mulai dari Rp 15.000 / bulan'}
+                  ? 'Perpanjang sebelum masa aktif habis'
+                  : 'Mulai dari Rp 15.000 / bulan'}
               </p>
             </div>
             <Link
@@ -128,6 +152,50 @@ export default function SubscriptionPage() {
             >
               {isActive ? 'Perpanjang' : 'Lihat Paket'}
             </Link>
+          </div>
+        )}
+
+        {/* Payment History */}
+        {history.length > 0 && (
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-100">
+              <h2 className="text-sm font-bold text-gray-900">Riwayat Pembayaran</h2>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead className="bg-gray-50">
+                  <tr>
+                    {['Order ID', 'Paket', 'Nominal', 'Status', 'Berlaku Hingga', 'Tanggal'].map(h => (
+                      <th key={h} className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {history.map(row => (
+                    <tr key={row.orderId} className="hover:bg-gray-50">
+                      <td className="px-4 py-3 text-xs text-gray-500 font-mono">{row.orderId}</td>
+                      <td className="px-4 py-3 text-gray-900 whitespace-nowrap">
+                        {PLAN_LABELS[row.plan] ?? row.plan}
+                      </td>
+                      <td className="px-4 py-3 text-gray-900 whitespace-nowrap">{rp(row.amount)}</td>
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-bold ${STATUS_STYLE[row.status] ?? 'bg-gray-100 text-gray-600'}`}>
+                          {row.status}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-gray-700 whitespace-nowrap">
+                        {row.expiredAt
+                          ? new Date(row.expiredAt).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })
+                          : '—'}
+                      </td>
+                      <td className="px-4 py-3 text-gray-500 whitespace-nowrap">
+                        {new Date(row.createdAt).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
 

@@ -4,12 +4,15 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { checkProAccess, PLANS, type PlanId } from '@/lib/subscription'
+import { getSnapClient } from '@/lib/midtrans'
 import { randomUUID } from 'crypto'
 
 export async function POST(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions)
     const userId = (session?.user as any)?.id
+    const userEmail = session?.user?.email ?? ''
+    const userName  = session?.user?.name  ?? ''
     if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
     const { planId } = await request.json() as { planId: PlanId }
@@ -29,27 +32,45 @@ export async function POST(request: NextRequest) {
     const orderId = `INV-${userId.slice(0, 8)}-${Date.now()}`
     const now     = new Date().toISOString()
 
-    // Buat subscription dengan status PENDING (akan diaktifkan setelah pembayaran)
+    // Buat subscription PENDING
     await prisma.$executeRawUnsafe(
       `INSERT INTO "subscriptions" ("id","userId","plan","status","startedAt","expiredAt","createdAt","updatedAt")
        VALUES ($1,$2,$3,'PENDING',$4,$5,$6,$7)`,
       subId, userId, planId, now, expiredAt.toISOString(), now, now
     )
 
+    // Request Snap token ke Midtrans
+    const snap = getSnapClient()
+    const transaction = await snap.createTransaction({
+      transaction_details: {
+        order_id: orderId,
+        gross_amount: plan.price,
+      },
+      item_details: [{
+        id: plan.id,
+        price: plan.price,
+        quantity: 1,
+        name: `Mutiara Investasi Pro — ${plan.label}`,
+      }],
+      customer_details: {
+        email: userEmail,
+        first_name: userName,
+      },
+      callbacks: {
+        finish: `${process.env.NEXTAUTH_URL}/subscription?status=finish`,
+      },
+    })
+
+    const snapToken = transaction.token
+
+    // Simpan payment dengan snap token
     await prisma.$executeRawUnsafe(
-      `INSERT INTO "payments" ("id","userId","subscriptionId","orderId","amount","status","createdAt","updatedAt")
-       VALUES ($1,$2,$3,$4,$5,'PENDING',$6,$7)`,
-      payId, userId, subId, orderId, plan.price, now, now
+      `INSERT INTO "payments" ("id","userId","subscriptionId","orderId","amount","status","midtransToken","createdAt","updatedAt")
+       VALUES ($1,$2,$3,$4,$5,'PENDING',$6,$7,$8)`,
+      payId, userId, subId, orderId, plan.price, snapToken, now, now
     )
 
-    // TODO: Midtrans Snap token akan ditambahkan di sini setelah integrasi
-    return NextResponse.json({
-      orderId,
-      amount: plan.price,
-      plan: plan.label,
-      expiredAt: expiredAt.toISOString(),
-      snapToken: null, // akan diisi setelah Midtrans terhubung
-    }, { status: 201 })
+    return NextResponse.json({ snapToken, orderId, amount: plan.price, plan: plan.label }, { status: 201 })
   } catch (error) {
     console.error('subscription/create error:', error)
     return NextResponse.json({ error: String(error) }, { status: 500 })
