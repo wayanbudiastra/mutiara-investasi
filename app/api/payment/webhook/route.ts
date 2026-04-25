@@ -18,13 +18,23 @@ export async function POST(request: NextRequest) {
       transaction_id,
     } = body
 
+    // Log semua request masuk untuk debugging
+    console.log('Webhook received:', JSON.stringify({
+      order_id, status_code, gross_amount, transaction_status, fraud_status, payment_type
+    }))
+
     // Validasi signature key
     const serverKey = process.env.MIDTRANS_SERVER_KEY ?? ''
     const isValid = verifyMidtransSignature(
       order_id, status_code, gross_amount, serverKey, signature_key
     )
     if (!isValid) {
-      console.error('Webhook: signature tidak valid', { order_id })
+      console.error('Webhook: signature tidak valid', {
+        order_id,
+        computed: require('crypto').createHash('sha512')
+          .update(order_id + status_code + gross_amount + serverKey).digest('hex'),
+        received: signature_key,
+      })
       return NextResponse.json({ error: 'Invalid signature' }, { status: 403 })
     }
 
