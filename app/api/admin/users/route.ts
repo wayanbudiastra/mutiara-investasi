@@ -15,7 +15,9 @@ export async function GET() {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
-    // Semua user + subscription aktif + total pembayaran
+    const now = new Date().toISOString()
+
+    // Semua user + subscription aktif (termasuk FREE_TRIAL) + total pembayaran
     const users = await prisma.$queryRawUnsafe<{
       id: string
       name: string | null
@@ -45,7 +47,7 @@ export async function GET() {
         FROM "subscriptions"
         WHERE "userId" = u."id"
           AND "status" = 'ACTIVE'
-          AND "expiredAt" > NOW()::TEXT
+          AND "expiredAt" > $1
         ORDER BY "expiredAt" DESC
         LIMIT 1
       ) s ON true
@@ -57,7 +59,7 @@ export async function GET() {
         WHERE "userId" = u."id" AND "status" = 'PAID'
       ) p ON true
       ORDER BY u."createdAt" DESC
-    `)
+    `, now)
 
     return NextResponse.json(users)
   } catch (error) {
