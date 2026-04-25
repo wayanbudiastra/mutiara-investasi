@@ -63,9 +63,13 @@ const navItems = [
   },
 ]
 
+const ADMIN_IDS = (process.env.NEXT_PUBLIC_ADMIN_USER_IDS ?? '').split(',').map(s => s.trim()).filter(Boolean)
+
 function SidebarContent({ onClose }: { onClose?: () => void }) {
   const pathname = usePathname()
   const { data: session } = useSession()
+  const userId  = (session?.user as any)?.id as string | undefined
+  const isAdmin = !!(userId && ADMIN_IDS.includes(userId))
 
   return (
     <div className="flex flex-col h-full">
@@ -130,9 +134,11 @@ function SidebarContent({ onClose }: { onClose?: () => void }) {
         })}
       </nav>
 
-      {/* Pro section */}
+      {/* Akun section */}
       <div className="px-3 pb-2">
         <p className="px-3 mb-2 text-xs font-semibold text-gray-400 uppercase tracking-wider">Akun</p>
+
+        {/* Langganan — semua user */}
         <Link
           href="/subscription"
           onClick={onClose}
@@ -150,6 +156,30 @@ function SidebarContent({ onClose }: { onClose?: () => void }) {
           </span>
           Langganan Saya
         </Link>
+
+        {/* Admin Monitor — hanya super admin */}
+        {isAdmin && (
+          <Link
+            href="/admin"
+            onClick={onClose}
+            className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors mt-1 ${
+              pathname === '/admin'
+                ? 'bg-red-50 text-red-700'
+                : 'text-gray-600 hover:bg-red-50 hover:text-red-700'
+            }`}
+          >
+            <span className={pathname === '/admin' ? 'text-red-600' : 'text-gray-400'}>
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+            </span>
+            <span>Monitor User</span>
+            <span className="ml-auto px-1.5 py-0.5 rounded text-xs font-bold bg-red-100 text-red-700 leading-none">
+              ADMIN
+            </span>
+          </Link>
+        )}
       </div>
 
       {/* User section */}
