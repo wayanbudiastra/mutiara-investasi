@@ -7,7 +7,7 @@ const PRO_ENABLED = process.env.PRO_ENABLED === 'true'
 const ADMIN_IDS = (process.env.ADMIN_USER_IDS ?? '')
   .split(',').map(s => s.trim()).filter(Boolean)
 
-async function ensureTables() {
+export async function ensureTables() {
   await prisma.$executeRawUnsafe(`
     CREATE TABLE IF NOT EXISTS "subscriptions" (
       "id"        TEXT NOT NULL PRIMARY KEY,
@@ -42,6 +42,9 @@ export type ProAccessResult =
   | { hasAccess: false; isAdmin: false; expiredAt?: undefined }
 
 export async function checkProAccess(userId: string): Promise<ProAccessResult> {
+  // Selalu pastikan tabel ada — diperlukan untuk fitur subscription meski PRO_ENABLED=false
+  await ensureTables()
+
   // Mode free: semua user mendapat akses tanpa perlu berlangganan
   if (!PRO_ENABLED) {
     return ADMIN_IDS.includes(userId)
@@ -52,8 +55,6 @@ export async function checkProAccess(userId: string): Promise<ProAccessResult> {
   if (ADMIN_IDS.includes(userId)) {
     return { hasAccess: true, isAdmin: true }
   }
-
-  await ensureTables()
 
   const rows = await prisma.$queryRawUnsafe<{ expiredAt: string }[]>(
     `SELECT "expiredAt" FROM "subscriptions"
