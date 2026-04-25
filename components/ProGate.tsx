@@ -21,12 +21,15 @@ export function ProGate() {
         </span>
 
         <h2 className="text-2xl font-bold text-gray-900 mb-3">
-          Akses Dibatasi
+          Masa Trial Berakhir
         </h2>
-        <p className="text-gray-500 mb-8 leading-relaxed">
-          Fitur ini tersedia untuk pengguna <strong>Pro</strong>.
-          Berlangganan untuk mengakses Rekap Dividen, Rekap Chart, dan Daftar Sekuritas.
+        <p className="text-gray-500 mb-4 leading-relaxed">
+          Free trial 30 hari Anda telah habis. Berlangganan paket Pro untuk
+          melanjutkan akses ke semua fitur premium.
         </p>
+        <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-2 mb-6 text-xs text-amber-700">
+          Daftar sekarang? Nikmati <strong>30 hari free trial</strong> otomatis saat registrasi.
+        </div>
 
         {/* Plans preview */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">

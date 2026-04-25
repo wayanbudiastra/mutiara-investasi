@@ -22,6 +22,7 @@ interface PaymentRow {
 }
 
 const PLAN_LABELS: Record<string, string> = {
+  FREE_TRIAL: 'Free Trial',
   MONTHLY: 'Bulanan', QUARTERLY: 'Kuartalan', SEMESTER: 'Semester', YEARLY: 'Tahunan',
 }
 
@@ -57,8 +58,10 @@ export default function SubscriptionPage() {
 
   if (status === 'loading' || loading) return null
 
-  const isActive = data?.hasAccess && !data?.isAdmin
-  const isAdmin  = data?.isAdmin
+  const isActive    = data?.hasAccess && !data?.isAdmin
+  const isAdmin     = data?.isAdmin
+  const isTrial     = isActive && history.some(h => h.status === 'PAID' ? false : h.plan === 'FREE_TRIAL')
+  const activePlan  = history.find(h => h.plan !== 'FREE_TRIAL' && h.status === 'PAID')
 
   const expiredDate = data?.expiredAt
     ? new Date(data.expiredAt).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })
@@ -97,15 +100,19 @@ export default function SubscriptionPage() {
             </div>
           ) : isActive ? (
             <div className="flex items-center gap-4">
-              <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center flex-shrink-0">
-                <svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <div className={`w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0 ${isTrial ? 'bg-amber-100' : 'bg-green-100'}`}>
+                <svg className={`w-6 h-6 ${isTrial ? 'text-amber-600' : 'text-green-600'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                 </svg>
               </div>
               <div className="flex-1">
                 <div className="flex items-center gap-2 mb-1">
-                  <span className="text-base font-bold text-gray-900">Paket Pro Aktif</span>
-                  <span className="px-2 py-0.5 rounded text-xs font-bold bg-green-100 text-green-700">AKTIF</span>
+                  <span className="text-base font-bold text-gray-900">
+                    {isTrial ? 'Free Trial' : `Pro — ${PLAN_LABELS[activePlan?.plan ?? ''] ?? 'Aktif'}`}
+                  </span>
+                  <span className={`px-2 py-0.5 rounded text-xs font-bold ${isTrial ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'}`}>
+                    {isTrial ? 'TRIAL' : 'AKTIF'}
+                  </span>
                 </div>
                 <p className="text-sm text-gray-500">
                   Berlaku hingga <strong>{expiredDate}</strong>
@@ -115,6 +122,11 @@ export default function SubscriptionPage() {
                     </span>
                   )}
                 </p>
+                {isTrial && (
+                  <p className="text-xs text-amber-600 mt-1">
+                    Setelah trial berakhir, berlangganan Pro untuk tetap akses semua fitur.
+                  </p>
+                )}
               </div>
             </div>
           ) : (
