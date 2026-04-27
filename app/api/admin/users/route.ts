@@ -17,19 +17,18 @@ export async function GET() {
 
     const now = new Date().toISOString()
 
-    // Semua user + subscription aktif (termasuk FREE_TRIAL) + total pembayaran
+    // Semua user + subscription aktif + total pembayaran
+    // isGranted dideteksi dari plan = 'GRANTED' (tidak butuh kolom isGranted di DB)
     const users = await prisma.$queryRawUnsafe<{
       id: string
       name: string | null
       email: string
       createdAt: Date
+      subscriptionId: string | null
       plan: string | null
       subStatus: string | null
       startedAt: string | null
       expiredAt: string | null
-      isGranted: boolean
-      subscriptionId: string | null
-      grantNote: string | null
       totalPaid: number
       paymentCount: number
     }[]>(`
@@ -38,20 +37,16 @@ export async function GET() {
         u."name",
         u."email",
         u."createdAt",
-        s."id"        AS "subscriptionId",
+        s."id"     AS "subscriptionId",
         s."plan",
-        s."status"    AS "subStatus",
+        s."status" AS "subStatus",
         s."startedAt",
         s."expiredAt",
-        s."isGranted",
-        s."grantNote",
         COALESCE(p."totalPaid", 0)    AS "totalPaid",
         COALESCE(p."paymentCount", 0) AS "paymentCount"
       FROM "users" u
       LEFT JOIN LATERAL (
-        SELECT "id", "plan", "status", "startedAt", "expiredAt",
-               COALESCE("isGranted", false) AS "isGranted",
-               "grantNote"
+        SELECT "id", "plan", "status", "startedAt", "expiredAt"
         FROM "subscriptions"
         WHERE "userId" = u."id"
           AND "status" = 'ACTIVE'
@@ -69,7 +64,40 @@ export async function GET() {
       ORDER BY u."createdAt" DESC
     `, now)
 
-    return NextResponse.json(users)
+    // Derive isGranted dan grantNote dari kolom yang sudah ada
+    // isGranted = true jika plan = 'GRANTED'
+    // grantNote diambil terpisah jika kolom sudah ada (opsional)
+    const result = users.map(u => ({
+      ...u,
+      isGranted: u.plan === 'GRANTED',
+      grantNote: null as string | null,
+    }))
+
+    // Coba ambil grantNote jika kolom sudah ada (tidak error jika belum ada)
+    if (result.some(u => u.isGranted)) {
+      try {
+        const grantedIds = result
+          .filter(u => u.isGranted && u.subscriptionId)
+          .map(u => u.subscriptionId!)
+
+        if (grantedIds.length > 0) {
+          const notes = await prisma.$queryRawUnsafe<{ id: string; grantNote: string | null }[]>(
+            `SELECT "id", "grantNote" FROM "subscriptions" WHERE "id" = ANY($1::text[])`,
+            grantedIds
+          )
+          const noteMap = Object.fromEntries(notes.map(n => [n.id, n.grantNote]))
+          result.forEach(u => {
+            if (u.subscriptionId && noteMap[u.subscriptionId] !== undefined) {
+              u.grantNote = noteMap[u.subscriptionId]
+            }
+          })
+        }
+      } catch {
+        // grantNote kolom belum ada — skip, tidak error
+      }
+    }
+
+    return NextResponse.json(result)
   } catch (error) {
     console.error('admin/users error:', error)
     return NextResponse.json({ error: String(error) }, { status: 500 })
