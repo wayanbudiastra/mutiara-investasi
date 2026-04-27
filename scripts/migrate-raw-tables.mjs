@@ -127,6 +127,8 @@ const alterations = [
   `ALTER TABLE "subscriptions" ADD COLUMN IF NOT EXISTS "grantedBy" TEXT`,
   `ALTER TABLE "subscriptions" ADD COLUMN IF NOT EXISTS "grantNote" TEXT`,
   `ALTER TABLE "subscriptions" ADD COLUMN IF NOT EXISTS "isGranted" BOOLEAN NOT NULL DEFAULT FALSE`,
+  `ALTER TABLE "portfolios" ADD COLUMN IF NOT EXISTS "lastPrice" DOUBLE PRECISION`,
+  `ALTER TABLE "portfolios" ADD COLUMN IF NOT EXISTS "lastPriceAt" TEXT`,
 ]
 
 async function run() {

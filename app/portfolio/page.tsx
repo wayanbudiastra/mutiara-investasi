@@ -59,7 +59,7 @@ export default function PortfolioPage() {
   const [proAccess, setProAccess]       = useState<{ hasAccess: boolean } | null>(null)
   const [activeTab, setActiveTab]       = useState<'portofolio' | 'jurnal'>('portofolio')
   const [rows, setRows]                 = useState<PortfolioRow[]>([])
-  const [prices, setPrices]             = useState<Record<string, number | null>>({})
+  const [prices, setPrices]             = useState<Record<string, { price: number | null; isCache: boolean; lastPriceAt: string | null }>>({})
   const [loadingData, setLoadingData]   = useState(false)
   const [loadingPrice, setLoadingPrice] = useState(false)
   const [securities, setSecurities]     = useState<Security[]>([])
@@ -240,12 +240,12 @@ export default function PortfolioPage() {
       // Ambil harga terkini
       const symbols = Array.from(new Set(rows.map(r => r.saham)))
       const priceRes = await fetch(`/api/portfolio/price?symbols=${symbols.join(',')}`)
-      const livePrice: Record<string, number | null> = priceRes.ok ? await priceRes.json() : {}
+      const livePriceRaw: Record<string, { price: number | null; isCache: boolean }> = priceRes.ok ? await priceRes.json() : {}
 
-      // Susun detail snapshot
+      // Susun detail snapshot — jurnal selalu gunakan harga terkini (cache atau live)
       const detail: JournalDetail[] = rows.map(r => {
         const modal      = r.hargaRata * r.lot * 100
-        const hargaAkhir = livePrice[r.saham] ?? null
+        const hargaAkhir = livePriceRaw[r.saham]?.price ?? null
         const nilaiPasar = hargaAkhir != null ? hargaAkhir * r.lot * 100 : null
         const floatRp    = nilaiPasar != null ? nilaiPasar - modal : null
         const floatPct   = floatRp != null && modal > 0 ? (floatRp / modal) * 100 : null
@@ -299,22 +299,29 @@ export default function PortfolioPage() {
   const keterangans  = Array.from(new Set(rows.map(r => r.keterangan))).sort()
   const filtered     = filterKet ? rows.filter(r => r.keterangan === filterKet) : rows
 
+  const getPrice = (saham: string) => prices[saham]?.price ?? null
+  const getIsCache = (saham: string) => prices[saham]?.isCache ?? false
+  const getCacheAt = (saham: string) => prices[saham]?.lastPriceAt ?? null
+
   const calc = (row: PortfolioRow) => {
     const modal      = row.hargaRata * row.lot * 100
-    const hargaAkhir = prices[row.saham]
+    const hargaAkhir = getPrice(row.saham)
+    const isCache    = getIsCache(row.saham)
+    const cacheAt    = getCacheAt(row.saham)
     const nilaiPasar = hargaAkhir != null ? hargaAkhir * row.lot * 100 : null
     const floatRp    = nilaiPasar != null ? nilaiPasar - modal : null
     const floatPct   = floatRp != null && modal > 0 ? (floatRp / modal) * 100 : null
-    return { modal, hargaAkhir, nilaiPasar, floatRp, floatPct }
+    return { modal, hargaAkhir, isCache, cacheAt, nilaiPasar, floatRp, floatPct }
   }
 
   const totalModal      = filtered.reduce((s, r) => s + r.hargaRata * r.lot * 100, 0)
   const totalNilaiPasar = filtered.reduce((s, r) => {
-    const h = prices[r.saham]; return h != null ? s + h * r.lot * 100 : s
+    const h = getPrice(r.saham); return h != null ? s + h * r.lot * 100 : s
   }, 0)
   const totalFloatRp  = totalNilaiPasar - totalModal
   const totalFloatPct = totalModal > 0 ? (totalFloatRp / totalModal) * 100 : 0
-  const hasAllPrices  = filtered.length > 0 && filtered.every(r => prices[r.saham] != null)
+  const hasAllPrices  = filtered.length > 0 && filtered.every(r => getPrice(r.saham) != null)
+  const allFromCache  = hasAllPrices && filtered.every(r => getIsCache(r.saham))
 
   const floatColor = (v: number | null) =>
     v == null ? 'text-gray-400' : v > 0 ? 'text-green-600' : v < 0 ? 'text-red-600' : 'text-gray-600'
@@ -577,6 +584,21 @@ export default function PortfolioPage() {
           <span className="ml-auto text-xs text-gray-400">{filtered.length} posisi</span>
         </div>
 
+        {/* Banner cache — muncul jika semua harga dari cache */}
+        {!loadingPrice && allFromCache && (
+          <div className="mb-4 flex items-center gap-3 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3">
+            <svg className="w-4 h-4 text-amber-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <p className="text-sm text-amber-800 flex-1">
+              Harga tidak dapat diperbarui saat ini. Menampilkan data cache terakhir.
+            </p>
+            <button onClick={() => fetchPrices(rows)} className="text-xs font-semibold text-amber-700 hover:text-amber-900 whitespace-nowrap">
+              Coba Refresh
+            </button>
+          </div>
+        )}
+
         {/* Table */}
         <div className="bg-white shadow sm:rounded-lg overflow-hidden">
           {loadingData ? (
@@ -598,7 +620,7 @@ export default function PortfolioPage() {
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
                   {filtered.map((row, idx) => {
-                    const { modal, hargaAkhir, nilaiPasar, floatRp, floatPct } = calc(row)
+                    const { modal, hargaAkhir, isCache, cacheAt, nilaiPasar, floatRp, floatPct } = calc(row)
                     return (
                       <tr key={row.id} className={rowBg(floatRp)}>
                         <td className="px-4 py-3 text-gray-500">{idx + 1}</td>
@@ -614,8 +636,19 @@ export default function PortfolioPage() {
                         <td className="px-4 py-3 whitespace-nowrap">
                           {loadingPrice
                             ? <span className="text-gray-400 text-xs">memuat...</span>
-                            : hargaAkhir != null ? rp(hargaAkhir)
-                            : <span className="text-gray-400">—</span>}
+                            : hargaAkhir != null
+                              ? <span className="inline-flex items-center gap-1.5">
+                                  {rp(hargaAkhir)}
+                                  {isCache && (
+                                    <span
+                                      title={cacheAt ? `Cache: ${new Date(cacheAt).toLocaleString('id-ID')}` : 'Data cache'}
+                                      className="cursor-help px-1.5 py-0.5 rounded text-xs font-bold bg-amber-100 text-amber-700"
+                                    >
+                                      Cache
+                                    </span>
+                                  )}
+                                </span>
+                              : <span className="text-gray-400">—</span>}
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap">
                           {nilaiPasar != null ? rp(nilaiPasar) : <span className="text-gray-400">—</span>}
