@@ -38,18 +38,20 @@ export async function GET() {
         u."name",
         u."email",
         u."createdAt",
-        s."id"           AS "subscriptionId",
+        s."id"        AS "subscriptionId",
         s."plan",
-        s."status"       AS "subStatus",
+        s."status"    AS "subStatus",
         s."startedAt",
         s."expiredAt",
-        COALESCE(s."isGranted", false) AS "isGranted",
+        s."isGranted",
         s."grantNote",
         COALESCE(p."totalPaid", 0)    AS "totalPaid",
         COALESCE(p."paymentCount", 0) AS "paymentCount"
       FROM "users" u
       LEFT JOIN LATERAL (
-        SELECT "plan", "status", "startedAt", "expiredAt"
+        SELECT "id", "plan", "status", "startedAt", "expiredAt",
+               COALESCE("isGranted", false) AS "isGranted",
+               "grantNote"
         FROM "subscriptions"
         WHERE "userId" = u."id"
           AND "status" = 'ACTIVE'
