@@ -75,6 +75,22 @@ const tables = [
       )`,
   },
   {
+    name: 'portfolio_journals',
+    sql: `
+      CREATE TABLE IF NOT EXISTS "portfolio_journals" (
+        "id"              TEXT NOT NULL PRIMARY KEY,
+        "userId"          TEXT NOT NULL,
+        "journalDate"     TEXT NOT NULL,
+        "totalModal"      DOUBLE PRECISION NOT NULL,
+        "totalNilaiPasar" DOUBLE PRECISION NOT NULL,
+        "totalFloatRp"    DOUBLE PRECISION NOT NULL,
+        "totalFloatPct"   DOUBLE PRECISION NOT NULL,
+        "detail"          TEXT NOT NULL,
+        "createdAt"       TEXT NOT NULL,
+        UNIQUE("userId", "journalDate")
+      )`,
+  },
+  {
     name: 'subscriptions',
     sql: `
       CREATE TABLE IF NOT EXISTS "subscriptions" (
@@ -106,7 +122,7 @@ const tables = [
   },
 ]
 
-// Kolom tambahan (ALTER TABLE IF NOT EXISTS kolom belum ada)
+// Kolom tambahan (ALTER TABLE — aman jika sudah ada)
 const alterations = [
   `ALTER TABLE "subscriptions" ADD COLUMN IF NOT EXISTS "grantedBy" TEXT`,
   `ALTER TABLE "subscriptions" ADD COLUMN IF NOT EXISTS "grantNote" TEXT`,

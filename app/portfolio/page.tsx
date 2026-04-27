@@ -4,6 +4,10 @@ import { useState, useEffect, useCallback } from 'react'
 import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 import { ProGate } from '@/components/ProGate'
+import {
+  LineChart, Line, XAxis, YAxis, CartesianGrid,
+  Tooltip, ResponsiveContainer,
+} from 'recharts'
 
 interface PortfolioRow {
   id: string
@@ -20,22 +24,56 @@ interface Security {
   status: string
 }
 
+interface JournalRow {
+  id: string
+  journalDate: string
+  totalModal: number
+  totalNilaiPasar: number
+  totalFloatRp: number
+  totalFloatPct: number
+  detail: string
+}
+
+interface JournalDetail {
+  keterangan: string
+  saham: string
+  hargaRata: number
+  lot: number
+  modal: number
+  hargaTerakhir: number | null
+  nilaiPasar: number | null
+  floatRp: number | null
+  floatPct: number | null
+}
+
 const emptyForm = { saham: '', hargaRata: '', lot: '' }
 
 const rp  = (v: number) => `Rp ${v.toLocaleString('id-ID')}`
 const pct = (v: number) => `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`
+const fmtDate = (d: string) => new Date(d + 'T00:00:00').toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })
 
 export default function PortfolioPage() {
   const { data: session, status } = useSession()
   const router = useRouter()
 
   const [proAccess, setProAccess]       = useState<{ hasAccess: boolean } | null>(null)
+  const [activeTab, setActiveTab]       = useState<'portofolio' | 'jurnal'>('portofolio')
   const [rows, setRows]                 = useState<PortfolioRow[]>([])
   const [prices, setPrices]             = useState<Record<string, number | null>>({})
   const [loadingData, setLoadingData]   = useState(false)
   const [loadingPrice, setLoadingPrice] = useState(false)
   const [securities, setSecurities]     = useState<Security[]>([])
   const [filterKet, setFilterKet]       = useState('')
+
+  // Jurnal states
+  const [journals, setJournals]             = useState<JournalRow[]>([])
+  const [journalYear, setJournalYear]       = useState(new Date().getFullYear())
+  const [loadingJournal, setLoadingJournal] = useState(false)
+  const [savingJournal, setSavingJournal]   = useState(false)
+  const [todayJournal, setTodayJournal]     = useState<JournalRow | null | undefined>(undefined)
+  const [showConfirm, setShowConfirm]       = useState(false)
+  const [previewData, setPreviewData]       = useState<JournalDetail[]>([])
+  const [detailJournal, setDetailJournal]   = useState<JournalRow | null>(null)
 
   const [showModal, setShowModal]   = useState(false)
   const [editItem, setEditItem]     = useState<PortfolioRow | null>(null)
@@ -167,6 +205,87 @@ export default function PortfolioPage() {
     } finally { setDeletingId(null) }
   }
 
+  // ── Journal helpers ────────────────────────────────────────────────────────
+
+  const fetchJournals = useCallback(async (year: number) => {
+    setLoadingJournal(true)
+    try {
+      const res = await fetch(`/api/portfolio/journal?year=${year}`)
+      if (res.ok) {
+        const data: JournalRow[] = await res.json()
+        setJournals(data)
+        // Cek apakah ada jurnal hari ini
+        const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' })
+        const found = data.find(j => j.journalDate === today) ?? null
+        setTodayJournal(found)
+      }
+    } finally {
+      setLoadingJournal(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (status === 'authenticated' && activeTab === 'jurnal') {
+      fetchJournals(journalYear)
+    }
+  }, [status, activeTab, journalYear, fetchJournals])
+
+  const handleBuatJurnal = async () => {
+    if (rows.length === 0) return
+    setSavingJournal(true)
+    try {
+      // Ambil harga terkini
+      const symbols = Array.from(new Set(rows.map(r => r.saham)))
+      const priceRes = await fetch(`/api/portfolio/price?symbols=${symbols.join(',')}`)
+      const livePrice: Record<string, number | null> = priceRes.ok ? await priceRes.json() : {}
+
+      // Susun detail snapshot
+      const detail: JournalDetail[] = rows.map(r => {
+        const modal      = r.hargaRata * r.lot * 100
+        const hargaAkhir = livePrice[r.saham] ?? null
+        const nilaiPasar = hargaAkhir != null ? hargaAkhir * r.lot * 100 : null
+        const floatRp    = nilaiPasar != null ? nilaiPasar - modal : null
+        const floatPct   = floatRp != null && modal > 0 ? (floatRp / modal) * 100 : null
+        return { keterangan: r.keterangan, saham: r.saham, hargaRata: r.hargaRata, lot: r.lot, modal, hargaTerakhir: hargaAkhir, nilaiPasar, floatRp, floatPct }
+      })
+
+      const totalModal      = detail.reduce((s, d) => s + d.modal, 0)
+      const totalNilaiPasar = detail.reduce((s, d) => s + (d.nilaiPasar ?? d.modal), 0)
+      const totalFloatRp    = totalNilaiPasar - totalModal
+      const totalFloatPct   = totalModal > 0 ? (totalFloatRp / totalModal) * 100 : 0
+
+      setPreviewData(detail)
+      setShowConfirm(true)
+      setSavingJournal(false)
+
+      // Simpan state untuk konfirmasi
+      ;(window as any).__journalPayload = { totalModal, totalNilaiPasar, totalFloatRp, totalFloatPct, detail }
+    } catch {
+      setSavingJournal(false)
+    }
+  }
+
+  const handleKonfirmasiJurnal = async () => {
+    const payload = (window as any).__journalPayload
+    if (!payload) return
+    setSavingJournal(true)
+    try {
+      const res = await fetch('/api/portfolio/journal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      if (res.status === 409) {
+        alert('Jurnal hari ini sudah dibuat.')
+      } else if (res.ok) {
+        setShowConfirm(false)
+        await fetchJournals(journalYear)
+      }
+    } finally {
+      setSavingJournal(false)
+    }
+  }
+
   // ── Render guard ───────────────────────────────────────────────────────────
 
   if (status === 'loading' || proAccess === null) return null
@@ -254,6 +373,149 @@ export default function PortfolioPage() {
             </div>
           ))}
         </div>
+
+        {/* Tabs */}
+        <div className="border-b border-gray-200 mb-6">
+          <nav className="flex gap-6">
+            {([['portofolio','Portofolio'],['jurnal','Jurnal']] as const).map(([tab, label]) => (
+              <button key={tab} onClick={() => setActiveTab(tab)}
+                className={`pb-3 text-sm font-medium border-b-2 transition-colors ${
+                  activeTab === tab ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'
+                }`}>
+                {label}
+              </button>
+            ))}
+          </nav>
+        </div>
+
+        {/* ── TAB JURNAL ──────────────────────────────────────────────────── */}
+        {activeTab === 'jurnal' && (() => {
+          const currentYear = new Date().getFullYear()
+          const availYears  = Array.from({ length: 5 }, (_, i) => currentYear - i)
+          const today       = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' })
+          const hasToday    = journals.some(j => j.journalDate === today)
+
+          // YTD summary
+          const lastJ  = journals[journals.length - 1]
+          const firstJ = journals[0]
+          const ytdGrowth = firstJ && lastJ
+            ? lastJ.totalNilaiPasar - firstJ.totalNilaiPasar
+            : 0
+
+          // Chart data
+          const chartData = journals.map(j => ({
+            date: j.journalDate.slice(5), // MM-DD
+            nilai: Math.round(j.totalNilaiPasar / 1000), // dalam ribu
+            modal: Math.round(j.totalModal / 1000),
+          }))
+          const chartColor = lastJ && firstJ && lastJ.totalNilaiPasar >= firstJ.totalNilaiPasar ? '#16a34a' : '#dc2626'
+
+          return (
+            <div>
+              {/* Header jurnal */}
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
+                <div>
+                  <h2 className="text-lg font-bold text-gray-900">Jurnal Portofolio</h2>
+                  <p className="text-xs text-gray-500 mt-0.5">Rekam kondisi portofolio sekali sehari</p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <select value={journalYear} onChange={e => setJournalYear(Number(e.target.value))}
+                    className="border border-gray-300 rounded-md px-3 py-1.5 text-sm">
+                    {availYears.map(y => <option key={y} value={y}>{y}</option>)}
+                  </select>
+                  <button
+                    onClick={handleBuatJurnal}
+                    disabled={savingJournal || hasToday || rows.length === 0}
+                    title={hasToday ? 'Jurnal hari ini sudah dibuat' : rows.length === 0 ? 'Belum ada portofolio' : ''}
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-md hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {savingJournal ? 'Memproses...' : hasToday ? '✓ Jurnal Dibuat' : '+ Buat Jurnal Hari Ini'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Summary cards YTD */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+                {[
+                  { label: 'Jurnal Tercatat', val: `${journals.length} hari`, color: 'text-gray-900' },
+                  { label: 'Nilai Pasar Terakhir', val: lastJ ? rp(lastJ.totalNilaiPasar) : '—', color: 'text-gray-900' },
+                  { label: 'Float P/L Terakhir', val: lastJ ? rp(lastJ.totalFloatRp) : '—', color: lastJ ? floatColor(lastJ.totalFloatRp) : 'text-gray-400' },
+                  { label: `Pertumbuhan ${journalYear}`, val: journals.length > 1 ? rp(ytdGrowth) : '—', color: floatColor(journals.length > 1 ? ytdGrowth : null) },
+                ].map(c => (
+                  <div key={c.label} className="bg-white rounded-lg shadow p-4">
+                    <p className="text-xs text-gray-500 mb-1">{c.label}</p>
+                    <p className={`text-base font-bold ${c.color}`}>{c.val}</p>
+                  </div>
+                ))}
+              </div>
+
+              {loadingJournal ? (
+                <div className="bg-white rounded-lg shadow p-12 text-center text-gray-400">Memuat jurnal...</div>
+              ) : journals.length === 0 ? (
+                <div className="bg-white rounded-lg shadow p-12 text-center text-gray-400">
+                  Belum ada jurnal untuk tahun {journalYear}.<br />
+                  <span className="text-sm">Klik <strong>"Buat Jurnal Hari Ini"</strong> untuk memulai.</span>
+                </div>
+              ) : (
+                <>
+                  {/* Line chart */}
+                  <div className="bg-white rounded-lg shadow p-4 mb-6">
+                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Tren Nilai Portofolio {journalYear}</p>
+                    <div style={{ height: 240 }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                          <XAxis dataKey="date" tick={{ fontSize: 10 }} />
+                          <YAxis tick={{ fontSize: 10 }} tickFormatter={v => `${v}rb`} width={55} />
+                          <Tooltip formatter={(v: number) => [`Rp ${(v * 1000).toLocaleString('id-ID')}`, 'Nilai Pasar']} />
+                          <Line type="monotone" dataKey="nilai" stroke={chartColor} strokeWidth={2} dot={false} />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+
+                  {/* Tabel riwayat */}
+                  <div className="bg-white shadow sm:rounded-lg overflow-hidden">
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full text-sm divide-y divide-gray-100">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            {['Tanggal','Total Modal','Nilai Pasar','Float P/L (Rp)','Float P/L (%)','Aksi'].map(h => (
+                              <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                          {[...journals].reverse().map(j => (
+                            <tr key={j.id} className="hover:bg-gray-50">
+                              <td className="px-4 py-3 text-gray-900 whitespace-nowrap font-medium">
+                                {fmtDate(j.journalDate)}
+                                {j.journalDate === today && <span className="ml-2 text-xs text-indigo-600 font-bold">Hari ini</span>}
+                              </td>
+                              <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{rp(j.totalModal)}</td>
+                              <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{rp(j.totalNilaiPasar)}</td>
+                              <td className={`px-4 py-3 font-semibold whitespace-nowrap ${floatColor(j.totalFloatRp)}`}>{rp(j.totalFloatRp)}</td>
+                              <td className={`px-4 py-3 font-semibold whitespace-nowrap ${floatColor(j.totalFloatPct)}`}>{pct(j.totalFloatPct)}</td>
+                              <td className="px-4 py-3">
+                                <button onClick={() => setDetailJournal(j)}
+                                  className="text-xs text-indigo-600 hover:text-indigo-800 font-medium">
+                                  Detail
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          )
+        })()}
+
+        {/* ── TAB PORTOFOLIO ──────────────────────────────────────────────── */}
+        {activeTab === 'portofolio' && <>
 
         {/* Filter */}
         <div className="mb-4 flex items-center gap-3">
@@ -343,9 +605,10 @@ export default function PortfolioPage() {
             </div>
           )}
         </div>
+        </>}
       </div>
 
-      {/* Modal */}
+      {/* Modal tambah/edit posisi */}
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="fixed inset-0 bg-black/40" onClick={closeModal} />
@@ -502,6 +765,144 @@ export default function PortfolioPage() {
               >
                 {saving ? 'Menyimpan...' : editItem ? 'Simpan Perubahan' : 'Tambah'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal konfirmasi buat jurnal */}
+      {showConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="fixed inset-0 bg-black/40" onClick={() => setShowConfirm(false)} />
+          <div className="relative z-50 bg-white rounded-xl shadow-2xl w-full max-w-lg mx-4 p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-base font-bold text-gray-900">
+                Konfirmasi Jurnal — {new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Asia/Jakarta' })}
+              </h2>
+              <button onClick={() => setShowConfirm(false)} className="text-gray-400 hover:text-gray-600">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Summary preview */}
+            {(() => {
+              const totalM  = previewData.reduce((s, d) => s + d.modal, 0)
+              const totalNP = previewData.reduce((s, d) => s + (d.nilaiPasar ?? d.modal), 0)
+              const totalF  = totalNP - totalM
+              const totalFP = totalM > 0 ? (totalF / totalM) * 100 : 0
+              return (
+                <div className="bg-gray-50 rounded-lg p-3 mb-4 grid grid-cols-2 gap-2 text-sm">
+                  <div><span className="text-gray-500">Total Modal:</span> <span className="font-semibold">{rp(totalM)}</span></div>
+                  <div><span className="text-gray-500">Nilai Pasar:</span> <span className="font-semibold">{rp(totalNP)}</span></div>
+                  <div><span className="text-gray-500">Floating P/L:</span> <span className={`font-semibold ${floatColor(totalF)}`}>{rp(totalF)}</span></div>
+                  <div><span className="text-gray-500">Float %:</span> <span className={`font-semibold ${floatColor(totalFP)}`}>{pct(totalFP)}</span></div>
+                </div>
+              )
+            })()}
+
+            {/* Detail per saham */}
+            <div className="max-h-48 overflow-y-auto mb-4">
+              <table className="min-w-full text-xs">
+                <thead className="bg-gray-50 sticky top-0">
+                  <tr>
+                    {['Saham','Akun','Avg','Lot','Harga Skrg','Float%'].map(h => (
+                      <th key={h} className="px-2 py-1.5 text-left font-semibold text-gray-500">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {previewData.map((d, i) => (
+                    <tr key={i} className="hover:bg-gray-50">
+                      <td className="px-2 py-1.5 font-bold text-indigo-700">{d.saham}</td>
+                      <td className="px-2 py-1.5 text-gray-600">{d.keterangan}</td>
+                      <td className="px-2 py-1.5">{rp(d.hargaRata)}</td>
+                      <td className="px-2 py-1.5">{d.lot}</td>
+                      <td className="px-2 py-1.5">{d.hargaTerakhir != null ? rp(d.hargaTerakhir) : '—'}</td>
+                      <td className={`px-2 py-1.5 font-semibold ${floatColor(d.floatPct)}`}>
+                        {d.floatPct != null ? pct(d.floatPct) : '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <p className="text-xs text-gray-400 mb-4">Harga diambil dari Yahoo Finance saat tombol diklik. Jurnal bersifat permanen dan tidak dapat diedit.</p>
+
+            <div className="flex gap-3 justify-end">
+              <button onClick={() => setShowConfirm(false)}
+                className="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50">
+                Batal
+              </button>
+              <button onClick={handleKonfirmasiJurnal} disabled={savingJournal}
+                className="px-4 py-2 text-sm font-semibold text-white bg-indigo-600 rounded-md hover:bg-indigo-700 disabled:opacity-50">
+                {savingJournal ? 'Menyimpan...' : 'Simpan Jurnal'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal detail jurnal */}
+      {detailJournal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="fixed inset-0 bg-black/40" onClick={() => setDetailJournal(null)} />
+          <div className="relative z-50 bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4 p-6">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-base font-bold text-gray-900">Detail Jurnal</h2>
+                <p className="text-xs text-gray-500">{fmtDate(detailJournal.journalDate)}</p>
+              </div>
+              <button onClick={() => setDetailJournal(null)} className="text-gray-400 hover:text-gray-600">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="bg-gray-50 rounded-lg p-3 mb-4 grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+              {[
+                { l: 'Modal', v: rp(detailJournal.totalModal), c: 'text-gray-900' },
+                { l: 'Nilai Pasar', v: rp(detailJournal.totalNilaiPasar), c: 'text-gray-900' },
+                { l: 'Float P/L', v: rp(detailJournal.totalFloatRp), c: floatColor(detailJournal.totalFloatRp) },
+                { l: 'Float %', v: pct(detailJournal.totalFloatPct), c: floatColor(detailJournal.totalFloatPct) },
+              ].map(x => (
+                <div key={x.l}>
+                  <p className="text-gray-500">{x.l}</p>
+                  <p className={`font-bold ${x.c}`}>{x.v}</p>
+                </div>
+              ))}
+            </div>
+            <div className="overflow-x-auto max-h-64 overflow-y-auto">
+              <table className="min-w-full text-xs">
+                <thead className="bg-gray-50 sticky top-0">
+                  <tr>
+                    {['Akun','Saham','Avg Price','Lot','Modal','Harga Saat Jurnal','Nilai Pasar','Float P/L','Float %'].map(h => (
+                      <th key={h} className="px-3 py-2 text-left font-semibold text-gray-500 whitespace-nowrap">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {(JSON.parse(detailJournal.detail) as JournalDetail[]).map((d, i) => (
+                    <tr key={i} className="hover:bg-gray-50">
+                      <td className="px-3 py-2 text-gray-700 whitespace-nowrap">{d.keterangan}</td>
+                      <td className="px-3 py-2 font-bold text-indigo-700">{d.saham}</td>
+                      <td className="px-3 py-2 whitespace-nowrap">{rp(d.hargaRata)}</td>
+                      <td className="px-3 py-2">{d.lot}</td>
+                      <td className="px-3 py-2 whitespace-nowrap">{rp(d.modal)}</td>
+                      <td className="px-3 py-2 whitespace-nowrap">{d.hargaTerakhir != null ? rp(d.hargaTerakhir) : '—'}</td>
+                      <td className="px-3 py-2 whitespace-nowrap">{d.nilaiPasar != null ? rp(d.nilaiPasar) : '—'}</td>
+                      <td className={`px-3 py-2 font-semibold whitespace-nowrap ${floatColor(d.floatRp)}`}>
+                        {d.floatRp != null ? rp(d.floatRp) : '—'}
+                      </td>
+                      <td className={`px-3 py-2 font-semibold whitespace-nowrap ${floatColor(d.floatPct)}`}>
+                        {d.floatPct != null ? pct(d.floatPct) : '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
         </div>
