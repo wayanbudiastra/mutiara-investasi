@@ -106,12 +106,24 @@ const tables = [
   },
 ]
 
+// Kolom tambahan (ALTER TABLE IF NOT EXISTS kolom belum ada)
+const alterations = [
+  `ALTER TABLE "subscriptions" ADD COLUMN IF NOT EXISTS "grantedBy" TEXT`,
+  `ALTER TABLE "subscriptions" ADD COLUMN IF NOT EXISTS "grantNote" TEXT`,
+  `ALTER TABLE "subscriptions" ADD COLUMN IF NOT EXISTS "isGranted" BOOLEAN NOT NULL DEFAULT FALSE`,
+]
+
 async function run() {
   console.log('Membuat tabel raw SQL...\n')
   try {
     for (const t of tables) {
       await prisma.$executeRawUnsafe(t.sql)
       console.log(`  ✓ ${t.name}`)
+    }
+    console.log('\nMenambah kolom baru...')
+    for (const sql of alterations) {
+      await prisma.$executeRawUnsafe(sql)
+      console.log(`  ✓ ${sql.split('ADD COLUMN IF NOT EXISTS')[1]?.trim().split(' ')[0]}`)
     }
     console.log('\nSemua tabel berhasil dibuat.')
   } catch (err) {

@@ -27,6 +27,9 @@ export async function GET() {
       subStatus: string | null
       startedAt: string | null
       expiredAt: string | null
+      isGranted: boolean
+      subscriptionId: string | null
+      grantNote: string | null
       totalPaid: number
       paymentCount: number
     }[]>(`
@@ -35,10 +38,13 @@ export async function GET() {
         u."name",
         u."email",
         u."createdAt",
+        s."id"           AS "subscriptionId",
         s."plan",
         s."status"       AS "subStatus",
         s."startedAt",
         s."expiredAt",
+        COALESCE(s."isGranted", false) AS "isGranted",
+        s."grantNote",
         COALESCE(p."totalPaid", 0)    AS "totalPaid",
         COALESCE(p."paymentCount", 0) AS "paymentCount"
       FROM "users" u

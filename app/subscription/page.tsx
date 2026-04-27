@@ -23,6 +23,7 @@ interface PaymentRow {
 
 const PLAN_LABELS: Record<string, string> = {
   FREE_TRIAL: 'Free Trial',
+  GRANTED:    'Akses Khusus',
   MONTHLY: 'Bulanan', QUARTERLY: 'Kuartalan', SEMESTER: 'Semester', YEARLY: 'Tahunan',
 }
 
@@ -60,8 +61,10 @@ export default function SubscriptionPage() {
 
   const isActive    = data?.hasAccess && !data?.isAdmin
   const isAdmin     = data?.isAdmin
-  const isTrial     = isActive && history.some(h => h.status === 'PAID' ? false : h.plan === 'FREE_TRIAL')
-  const activePlan  = history.find(h => h.plan !== 'FREE_TRIAL' && h.status === 'PAID')
+  const activeSubPlan = history.find(h => ['ACTIVE'].includes(h.status ?? ''))?.plan ?? null
+  const isTrial     = activeSubPlan === 'FREE_TRIAL'
+  const isGranted   = activeSubPlan === 'GRANTED'
+  const activePlan  = history.find(h => h.plan && !['FREE_TRIAL','GRANTED'].includes(h.plan) && h.status === 'PAID')
 
   const expiredDate = data?.expiredAt
     ? new Date(data.expiredAt).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })
@@ -100,18 +103,25 @@ export default function SubscriptionPage() {
             </div>
           ) : isActive ? (
             <div className="flex items-center gap-4">
-              <div className={`w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0 ${isTrial ? 'bg-amber-100' : 'bg-green-100'}`}>
-                <svg className={`w-6 h-6 ${isTrial ? 'text-amber-600' : 'text-green-600'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <div className={`w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0 ${
+                isGranted ? 'bg-purple-100' : isTrial ? 'bg-amber-100' : 'bg-green-100'
+              }`}>
+                <svg className={`w-6 h-6 ${isGranted ? 'text-purple-600' : isTrial ? 'text-amber-600' : 'text-green-600'}`}
+                  fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                 </svg>
               </div>
               <div className="flex-1">
                 <div className="flex items-center gap-2 mb-1">
                   <span className="text-base font-bold text-gray-900">
-                    {isTrial ? 'Free Trial' : `Pro — ${PLAN_LABELS[activePlan?.plan ?? ''] ?? 'Aktif'}`}
+                    {isGranted ? 'Akses Khusus' : isTrial ? 'Free Trial' : `Pro — ${PLAN_LABELS[activePlan?.plan ?? ''] ?? 'Aktif'}`}
                   </span>
-                  <span className={`px-2 py-0.5 rounded text-xs font-bold ${isTrial ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'}`}>
-                    {isTrial ? 'TRIAL' : 'AKTIF'}
+                  <span className={`px-2 py-0.5 rounded text-xs font-bold ${
+                    isGranted ? 'bg-purple-100 text-purple-700' :
+                    isTrial   ? 'bg-amber-100 text-amber-700' :
+                                'bg-green-100 text-green-700'
+                  }`}>
+                    {isGranted ? 'GRANTED' : isTrial ? 'TRIAL' : 'AKTIF'}
                   </span>
                 </div>
                 <p className="text-sm text-gray-500">
@@ -122,6 +132,11 @@ export default function SubscriptionPage() {
                     </span>
                   )}
                 </p>
+                {isGranted && (
+                  <p className="text-xs text-purple-600 mt-1">
+                    Akses khusus dari Admin. Berlangganan Pro setelah masa akses berakhir.
+                  </p>
+                )}
                 {isTrial && (
                   <p className="text-xs text-amber-600 mt-1">
                     Setelah trial berakhir, berlangganan Pro untuk tetap akses semua fitur.
