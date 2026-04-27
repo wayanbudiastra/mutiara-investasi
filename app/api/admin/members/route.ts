@@ -10,6 +10,16 @@ const ADMIN_IDS = (process.env.ADMIN_USER_IDS ?? '')
 
 function isAdmin(userId: string) { return ADMIN_IDS.includes(userId) }
 
+// Cek apakah kolom sudah ada di tabel subscriptions
+async function hasGrantColumns(): Promise<boolean> {
+  try {
+    await prisma.$queryRawUnsafe(`SELECT "isGranted" FROM "subscriptions" LIMIT 0`)
+    return true
+  } catch {
+    return false
+  }
+}
+
 // POST — grant akses ke user
 export async function POST(request: NextRequest) {
   try {
@@ -29,23 +39,38 @@ export async function POST(request: NextRequest) {
     expiredAt.setDate(expiredAt.getDate() + Number(durationDays))
     const nowISO = now.toISOString()
 
-    // Expire semua granted subscription aktif sebelumnya milik user ini
+    // Expire semua granted subscription aktif sebelumnya (deteksi via plan='GRANTED')
     await prisma.$executeRawUnsafe(
       `UPDATE "subscriptions" SET "status"='EXPIRED', "updatedAt"=$1
-       WHERE "userId"=$2 AND "isGranted"=true AND "status"='ACTIVE'`,
+       WHERE "userId"=$2 AND "plan"='GRANTED' AND "status"='ACTIVE'`,
       nowISO, targetUserId
     )
 
-    // Buat subscription GRANTED baru
-    await prisma.$executeRawUnsafe(
-      `INSERT INTO "subscriptions"
-         ("id","userId","plan","status","startedAt","expiredAt","grantedBy","grantNote","isGranted","createdAt","updatedAt")
-       VALUES ($1,$2,'GRANTED','ACTIVE',$3,$4,$5,$6,true,$7,$8)`,
-      randomUUID(), targetUserId,
-      nowISO, expiredAt.toISOString(),
-      adminId, note ?? null,
-      nowISO, nowISO
-    )
+    // Cek apakah kolom baru sudah ada
+    const hasExtra = await hasGrantColumns()
+
+    if (hasExtra) {
+      // Gunakan kolom lengkap jika sudah ada
+      await prisma.$executeRawUnsafe(
+        `INSERT INTO "subscriptions"
+           ("id","userId","plan","status","startedAt","expiredAt","grantedBy","grantNote","isGranted","createdAt","updatedAt")
+         VALUES ($1,$2,'GRANTED','ACTIVE',$3,$4,$5,$6,true,$7,$8)`,
+        randomUUID(), targetUserId,
+        nowISO, expiredAt.toISOString(),
+        adminId, note ?? null,
+        nowISO, nowISO
+      )
+    } else {
+      // Fallback: INSERT tanpa kolom baru (kompatibel dengan DB lama)
+      await prisma.$executeRawUnsafe(
+        `INSERT INTO "subscriptions"
+           ("id","userId","plan","status","startedAt","expiredAt","createdAt","updatedAt")
+         VALUES ($1,$2,'GRANTED','ACTIVE',$3,$4,$5,$6)`,
+        randomUUID(), targetUserId,
+        nowISO, expiredAt.toISOString(),
+        nowISO, nowISO
+      )
+    }
 
     return NextResponse.json({ ok: true, expiredAt: expiredAt.toISOString() })
   } catch (error) {
@@ -54,7 +79,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// PUT — revoke atau extend (action dalam body)
+// PUT — revoke atau extend
 export async function PUT(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions)
@@ -68,7 +93,8 @@ export async function PUT(request: NextRequest) {
 
     if (action === 'revoke') {
       await prisma.$executeRawUnsafe(
-        `UPDATE "subscriptions" SET "status"='EXPIRED', "updatedAt"=$1 WHERE "id"=$2 AND "isGranted"=true`,
+        `UPDATE "subscriptions" SET "status"='EXPIRED', "updatedAt"=$1
+         WHERE "id"=$2 AND "plan"='GRANTED'`,
         now, subscriptionId
       )
       return NextResponse.json({ ok: true })
@@ -78,14 +104,14 @@ export async function PUT(request: NextRequest) {
       if (!additionalDays || additionalDays < 1) {
         return NextResponse.json({ error: 'additionalDays wajib diisi' }, { status: 400 })
       }
-      // Perpanjang dari expiredAt saat ini
       const subs = await prisma.$queryRawUnsafe<{ expiredAt: string }[]>(
         `SELECT "expiredAt" FROM "subscriptions" WHERE "id"=$1 LIMIT 1`, subscriptionId
       )
-      if (!subs.length) return NextResponse.json({ error: 'Subscription tidak ditemukan' }, { status: 404 })
-
+      if (!subs.length) {
+        return NextResponse.json({ error: 'Subscription tidak ditemukan' }, { status: 404 })
+      }
       const base = new Date(subs[0].expiredAt)
-      if (base < new Date()) base.setTime(Date.now()) // jika sudah expired, mulai dari sekarang
+      if (base < new Date()) base.setTime(Date.now())
       base.setDate(base.getDate() + Number(additionalDays))
 
       await prisma.$executeRawUnsafe(
