@@ -68,6 +68,8 @@ export default function PortfolioPage() {
   // Jurnal states
   const [journals, setJournals]             = useState<JournalRow[]>([])
   const [journalYear, setJournalYear]       = useState(new Date().getFullYear())
+  const [journalPage, setJournalPage]       = useState(1)
+  const JOURNAL_PAGE_SIZE = 10
   const [loadingJournal, setLoadingJournal] = useState(false)
   const [savingJournal, setSavingJournal]   = useState(false)
   const [todayJournal, setTodayJournal]     = useState<JournalRow | null | undefined>(undefined)
@@ -209,6 +211,7 @@ export default function PortfolioPage() {
 
   const fetchJournals = useCallback(async (year: number) => {
     setLoadingJournal(true)
+    setJournalPage(1)
     try {
       const res = await fetch(`/api/portfolio/journal?year=${year}`)
       if (res.ok) {
@@ -475,39 +478,77 @@ export default function PortfolioPage() {
                   </div>
 
                   {/* Tabel riwayat */}
-                  <div className="bg-white shadow sm:rounded-lg overflow-hidden">
-                    <div className="overflow-x-auto">
-                      <table className="min-w-full text-sm divide-y divide-gray-100">
-                        <thead className="bg-gray-50">
-                          <tr>
-                            {['Tanggal','Total Modal','Nilai Pasar','Float P/L (Rp)','Float P/L (%)','Aksi'].map(h => (
-                              <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-100">
-                          {[...journals].reverse().map(j => (
-                            <tr key={j.id} className="hover:bg-gray-50">
-                              <td className="px-4 py-3 text-gray-900 whitespace-nowrap font-medium">
-                                {fmtDate(j.journalDate)}
-                                {j.journalDate === today && <span className="ml-2 text-xs text-indigo-600 font-bold">Hari ini</span>}
-                              </td>
-                              <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{rp(j.totalModal)}</td>
-                              <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{rp(j.totalNilaiPasar)}</td>
-                              <td className={`px-4 py-3 font-semibold whitespace-nowrap ${floatColor(j.totalFloatRp)}`}>{rp(j.totalFloatRp)}</td>
-                              <td className={`px-4 py-3 font-semibold whitespace-nowrap ${floatColor(j.totalFloatPct)}`}>{pct(j.totalFloatPct)}</td>
-                              <td className="px-4 py-3">
-                                <button onClick={() => setDetailJournal(j)}
-                                  className="text-xs text-indigo-600 hover:text-indigo-800 font-medium">
-                                  Detail
-                                </button>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
+                  {(() => {
+                    const sorted     = [...journals].reverse()
+                    const totalPages = Math.ceil(sorted.length / JOURNAL_PAGE_SIZE)
+                    const paged      = sorted.slice((journalPage - 1) * JOURNAL_PAGE_SIZE, journalPage * JOURNAL_PAGE_SIZE)
+                    return (
+                      <div className="bg-white shadow sm:rounded-lg overflow-hidden">
+                        <div className="overflow-x-auto">
+                          <table className="min-w-full text-sm divide-y divide-gray-100">
+                            <thead className="bg-gray-50">
+                              <tr>
+                                {['No','Tanggal','Total Modal','Nilai Pasar','Float P/L (Rp)','Float P/L (%)','Aksi'].map(h => (
+                                  <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100">
+                              {paged.map((j, idx) => (
+                                <tr key={j.id} className="hover:bg-gray-50">
+                                  <td className="px-4 py-3 text-gray-400 text-xs">{(journalPage - 1) * JOURNAL_PAGE_SIZE + idx + 1}</td>
+                                  <td className="px-4 py-3 text-gray-900 whitespace-nowrap font-medium">
+                                    {fmtDate(j.journalDate)}
+                                    {j.journalDate === today && <span className="ml-2 text-xs text-indigo-600 font-bold">Hari ini</span>}
+                                  </td>
+                                  <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{rp(j.totalModal)}</td>
+                                  <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{rp(j.totalNilaiPasar)}</td>
+                                  <td className={`px-4 py-3 font-semibold whitespace-nowrap ${floatColor(j.totalFloatRp)}`}>{rp(j.totalFloatRp)}</td>
+                                  <td className={`px-4 py-3 font-semibold whitespace-nowrap ${floatColor(j.totalFloatPct)}`}>{pct(j.totalFloatPct)}</td>
+                                  <td className="px-4 py-3">
+                                    <button onClick={() => setDetailJournal(j)}
+                                      className="text-xs text-indigo-600 hover:text-indigo-800 font-medium">Detail</button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+
+                        {/* Pagination */}
+                        {totalPages > 1 && (
+                          <div className="bg-white px-4 py-3 flex items-center justify-between border-t border-gray-100">
+                            <div className="text-sm text-gray-700">
+                              Menampilkan{' '}
+                              <span className="font-medium">{(journalPage - 1) * JOURNAL_PAGE_SIZE + 1}</span>
+                              {' '}–{' '}
+                              <span className="font-medium">{Math.min(journalPage * JOURNAL_PAGE_SIZE, sorted.length)}</span>
+                              {' '}dari{' '}
+                              <span className="font-medium">{sorted.length}</span> jurnal
+                            </div>
+                            <div className="flex gap-1">
+                              <button onClick={() => setJournalPage(1)} disabled={journalPage === 1}
+                                className="px-2 py-1 text-sm border rounded disabled:opacity-40 hover:bg-gray-50">«</button>
+                              <button onClick={() => setJournalPage(p => p - 1)} disabled={journalPage === 1}
+                                className="px-3 py-1 text-sm border rounded disabled:opacity-40 hover:bg-gray-50">Prev</button>
+                              {Array.from({ length: totalPages }, (_, i) => i + 1)
+                                .filter(p => Math.abs(p - journalPage) <= 2)
+                                .map(p => (
+                                  <button key={p} onClick={() => setJournalPage(p)}
+                                    className={`px-3 py-1 text-sm border rounded ${p === journalPage ? 'bg-indigo-600 text-white border-indigo-600' : 'hover:bg-gray-50'}`}>
+                                    {p}
+                                  </button>
+                                ))}
+                              <button onClick={() => setJournalPage(p => p + 1)} disabled={journalPage === totalPages}
+                                className="px-3 py-1 text-sm border rounded disabled:opacity-40 hover:bg-gray-50">Next</button>
+                              <button onClick={() => setJournalPage(totalPages)} disabled={journalPage === totalPages}
+                                className="px-2 py-1 text-sm border rounded disabled:opacity-40 hover:bg-gray-50">»</button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })()}
                 </>
               )}
             </div>
