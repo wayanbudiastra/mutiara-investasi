@@ -109,3 +109,46 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: String(error) }, { status: 500 })
   }
 }
+
+// DELETE — hanya boleh hapus jurnal hari ini (WIB)
+export async function DELETE(request: NextRequest) {
+  try {
+    const session = await getServerSession(authOptions)
+    const userId = (session?.user as any)?.id
+    if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+    const { searchParams } = new URL(request.url)
+    const id = searchParams.get('id')
+    if (!id) return NextResponse.json({ error: 'id wajib diisi' }, { status: 400 })
+
+    // Cek jurnal milik user ini
+    const rows = await prisma.$queryRawUnsafe<{ journalDate: string }[]>(
+      `SELECT "journalDate" FROM "portfolio_journals" WHERE "id" = $1 AND "userId" = $2 LIMIT 1`,
+      id, userId
+    )
+    if (!rows.length) {
+      return NextResponse.json({ error: 'Jurnal tidak ditemukan' }, { status: 404 })
+    }
+
+    const journalDate = rows[0].journalDate
+    const today       = todayWIB()
+
+    // Hanya boleh hapus jurnal hari ini
+    if (journalDate !== today) {
+      return NextResponse.json(
+        { error: 'Jurnal yang sudah lewat tidak dapat dihapus' },
+        { status: 403 }
+      )
+    }
+
+    await prisma.$executeRawUnsafe(
+      `DELETE FROM "portfolio_journals" WHERE "id" = $1 AND "userId" = $2`,
+      id, userId
+    )
+
+    return NextResponse.json({ ok: true })
+  } catch (error) {
+    console.error('DELETE journal error:', error)
+    return NextResponse.json({ error: String(error) }, { status: 500 })
+  }
+}

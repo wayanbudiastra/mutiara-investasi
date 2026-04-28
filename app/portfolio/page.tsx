@@ -79,7 +79,8 @@ export default function PortfolioPage() {
   const [todayJournal, setTodayJournal]     = useState<JournalRow | null | undefined>(undefined)
   const [showConfirm, setShowConfirm]       = useState(false)
   const [previewData, setPreviewData]       = useState<JournalDetail[]>([])
-  const [detailJournal, setDetailJournal]   = useState<JournalRow | null>(null)
+  const [detailJournal, setDetailJournal]     = useState<JournalRow | null>(null)
+  const [deletingJournalId, setDeletingJournalId] = useState<string | null>(null)
 
   const [showModal, setShowModal]   = useState(false)
   const [editItem, setEditItem]     = useState<PortfolioRow | null>(null)
@@ -325,6 +326,22 @@ export default function PortfolioPage() {
     }
   }
 
+  const handleDeleteJournal = async (j: JournalRow) => {
+    if (!confirm('Hapus jurnal hari ini? Data tidak dapat dikembalikan.')) return
+    setDeletingJournalId(j.id)
+    try {
+      const res = await fetch(`/api/portfolio/journal?id=${j.id}`, { method: 'DELETE' })
+      if (res.ok) {
+        await fetchJournals(journalYear)
+      } else {
+        const err = await res.json()
+        alert(err.error ?? 'Gagal menghapus jurnal')
+      }
+    } finally {
+      setDeletingJournalId(null)
+    }
+  }
+
   // ── Render guard ───────────────────────────────────────────────────────────
 
   if (status === 'loading' || proAccess === null) return null
@@ -563,8 +580,21 @@ export default function PortfolioPage() {
                                   <td className={`px-4 py-3 font-semibold whitespace-nowrap ${floatColor(j.totalFloatRp)}`}>{rp(j.totalFloatRp)}</td>
                                   <td className={`px-4 py-3 font-semibold whitespace-nowrap ${floatColor(j.totalFloatPct)}`}>{pct(j.totalFloatPct)}</td>
                                   <td className="px-4 py-3">
-                                    <button onClick={() => setDetailJournal(j)}
-                                      className="text-xs text-indigo-600 hover:text-indigo-800 font-medium">Detail</button>
+                                    <div className="flex items-center gap-3">
+                                      <button onClick={() => setDetailJournal(j)}
+                                        className="text-xs text-indigo-600 hover:text-indigo-800 font-medium">
+                                        Detail
+                                      </button>
+                                      {j.journalDate === today && (
+                                        <button
+                                          onClick={() => handleDeleteJournal(j)}
+                                          disabled={deletingJournalId === j.id}
+                                          className="text-xs text-red-600 hover:text-red-800 disabled:opacity-50"
+                                        >
+                                          {deletingJournalId === j.id ? '...' : 'Hapus'}
+                                        </button>
+                                      )}
+                                    </div>
                                   </td>
                                 </tr>
                               ))}
