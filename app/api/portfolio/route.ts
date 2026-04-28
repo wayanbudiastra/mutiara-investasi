@@ -18,6 +18,13 @@ async function ensureTable() {
       "updatedAt"  TEXT NOT NULL
     )
   `)
+  // Tambah kolom cache harga otomatis — aman jika sudah ada
+  await prisma.$executeRawUnsafe(
+    `ALTER TABLE "portfolios" ADD COLUMN IF NOT EXISTS "lastPrice" DOUBLE PRECISION`
+  )
+  await prisma.$executeRawUnsafe(
+    `ALTER TABLE "portfolios" ADD COLUMN IF NOT EXISTS "lastPriceAt" TEXT`
+  )
 }
 
 // Singleton yahoo-finance2 — shared dengan price route
@@ -40,9 +47,17 @@ export async function GET() {
 
     await ensureTable()
 
-    // SELECT * — bekerja meski kolom lastPrice/lastPriceAt belum ada (migrasi belum jalan)
-    const rows = await prisma.$queryRawUnsafe(
-      `SELECT * FROM "portfolios" WHERE "userId" = $1 ORDER BY "keterangan" ASC, "saham" ASC`,
+    // ensureTable() sudah memastikan kolom lastPrice & lastPriceAt ada
+    const rows = await prisma.$queryRawUnsafe<{
+      id: string; keterangan: string; saham: string
+      hargaRata: number; lot: number
+      lastPrice: number | null; lastPriceAt: string | null
+    }[]>(
+      `SELECT "id","userId","keterangan","saham","hargaRata","lot",
+              "createdAt","updatedAt","lastPrice","lastPriceAt"
+       FROM "portfolios"
+       WHERE "userId" = $1
+       ORDER BY "keterangan" ASC, "saham" ASC`,
       userId
     )
     return NextResponse.json(rows)
