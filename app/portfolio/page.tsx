@@ -777,14 +777,7 @@ export default function PortfolioPage() {
                               <td className="px-3 py-3 text-gray-900">{r.lot}</td>
                               <td className="px-3 py-3 text-gray-900 whitespace-nowrap">{rp(r.modal)}</td>
                               <td className="px-3 py-3 whitespace-nowrap">
-                                {r.hargaAkhir != null ? (
-                                  <span className="inline-flex items-center gap-1">
-                                    {rp(r.hargaAkhir)}
-                                    {prices[r.saham]?.isCache && (
-                                      <span className="text-xs px-1 py-0.5 rounded bg-amber-100 text-amber-700">Cache</span>
-                                    )}
-                                  </span>
-                                ) : <span className="text-gray-400">—</span>}
+                                {r.hargaAkhir != null ? rp(r.hargaAkhir) : <span className="text-gray-400">—</span>}
                               </td>
                               <td className="px-3 py-3 whitespace-nowrap">{r.nilaiPasar != null ? rp(r.nilaiPasar) : <span className="text-gray-400">—</span>}</td>
                               <td className={`px-3 py-3 font-semibold whitespace-nowrap ${glC(r.glRp)}`}>{r.glRp != null ? rp(r.glRp) : '—'}</td>
@@ -953,20 +946,6 @@ export default function PortfolioPage() {
           <span className="ml-auto text-xs text-gray-400">{filtered.length} posisi</span>
         </div>
 
-        {/* Banner cache — muncul jika semua harga dari cache */}
-        {!loadingPrice && allFromCache && (
-          <div className="mb-4 flex items-center gap-3 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3">
-            <svg className="w-4 h-4 text-amber-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <p className="text-sm text-amber-800 flex-1">
-              Harga tidak dapat diperbarui saat ini. Menampilkan data cache terakhir.
-            </p>
-            <button onClick={() => fetchPrices(rows)} className="text-xs font-semibold text-amber-700 hover:text-amber-900 whitespace-nowrap">
-              Coba Refresh
-            </button>
-          </div>
-        )}
 
         {/* Table */}
         <div className="bg-white shadow sm:rounded-lg overflow-hidden">
@@ -1006,17 +985,7 @@ export default function PortfolioPage() {
                           {loadingPrice
                             ? <span className="text-gray-400 text-xs">memuat...</span>
                             : hargaAkhir != null
-                              ? <span className="inline-flex items-center gap-1.5">
-                                  {rp(hargaAkhir)}
-                                  {isCache && (
-                                    <span
-                                      title={cacheAt ? `Cache: ${new Date(cacheAt).toLocaleString('id-ID')}` : 'Data cache'}
-                                      className="cursor-help px-1.5 py-0.5 rounded text-xs font-bold bg-amber-100 text-amber-700"
-                                    >
-                                      Cache
-                                    </span>
-                                  )}
-                                </span>
+                              ? rp(hargaAkhir)
                               : <span className="text-gray-400">—</span>}
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap">
