@@ -15,6 +15,8 @@ interface PortfolioRow {
   saham: string
   hargaRata: number
   lot: number
+  lastPrice: number | null
+  lastPriceAt: string | null
 }
 
 interface Security {
@@ -98,12 +100,28 @@ export default function PortfolioPage() {
     setLoadingData(true)
     try {
       const res = await fetch('/api/portfolio')
-      if (res.ok) setRows(await res.json())
+      if (res.ok) {
+        const data: PortfolioRow[] = await res.json()
+        setRows(data)
+        // Build prices state dari lastPrice di DB — tidak hit Yahoo Finance
+        const initial: Record<string, { price: number | null; isCache: boolean; lastPriceAt: string | null }> = {}
+        data.forEach(r => {
+          if (!initial[r.saham]) {
+            initial[r.saham] = {
+              price:       r.lastPrice ?? null,
+              isCache:     r.lastPrice != null,
+              lastPriceAt: r.lastPriceAt ?? null,
+            }
+          }
+        })
+        setPrices(initial)
+      }
     } finally {
       setLoadingData(false)
     }
   }, [])
 
+  // Refresh manual — satu-satunya trigger Yahoo Finance
   const fetchPrices = useCallback(async (data: PortfolioRow[]) => {
     const uniqueSymbols = Array.from(new Set(data.map(r => r.saham)))
     if (uniqueSymbols.length === 0) return
@@ -135,9 +153,7 @@ export default function PortfolioPage() {
     if (userId) fetchSecurities(userId)
   }, [status, session, fetchPortfolio, fetchSecurities])
 
-  useEffect(() => {
-    if (rows.length > 0) fetchPrices(rows)
-  }, [rows, fetchPrices])
+  // Auto-fetch dihapus — harga hanya diperbarui saat user klik "Refresh Harga"
 
   // ── Modal helpers ──────────────────────────────────────────────────────────
 
@@ -196,7 +212,25 @@ export default function PortfolioPage() {
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify(payload),
       })
-      if (res.ok) { closeModal(); await fetchPortfolio() }
+      if (res.ok) {
+        // Untuk posisi baru: API sudah fetch harga dari Yahoo Finance
+        // Update prices state langsung dari response tanpa reload penuh
+        if (!editItem) {
+          const data = await res.json()
+          if (data.lastPrice != null) {
+            setPrices(prev => ({
+              ...prev,
+              [form.saham.toUpperCase()]: {
+                price: data.lastPrice,
+                isCache: true,
+                lastPriceAt: data.lastPriceAt,
+              }
+            }))
+          }
+        }
+        closeModal()
+        await fetchPortfolio()
+      }
     } finally { setSaving(false) }
   }
 
@@ -346,17 +380,31 @@ export default function PortfolioPage() {
             <p className="mt-1 text-sm text-gray-500">{rows.length} posisi tersimpan</p>
           </div>
           <div className="flex items-center gap-3">
-            <button
-              onClick={() => fetchPrices(rows)}
-              disabled={loadingPrice || rows.length === 0}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 text-gray-700 text-sm font-medium rounded-md hover:bg-gray-50 disabled:opacity-50"
-            >
-              <svg className={`w-4 h-4 ${loadingPrice ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-              {loadingPrice ? 'Memperbarui...' : 'Refresh Harga'}
-            </button>
+            <div className="flex flex-col items-end gap-0.5">
+              <button
+                onClick={() => fetchPrices(rows)}
+                disabled={loadingPrice || rows.length === 0}
+                className="inline-flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 text-gray-700 text-sm font-medium rounded-md hover:bg-gray-50 disabled:opacity-50"
+              >
+                <svg className={`w-4 h-4 ${loadingPrice ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                    d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                {loadingPrice ? 'Memperbarui...' : 'Refresh Harga'}
+              </button>
+              {(() => {
+                const latest = Object.values(prices)
+                  .map(p => p.lastPriceAt)
+                  .filter(Boolean)
+                  .sort()
+                  .pop()
+                return latest ? (
+                  <span className="text-xs text-gray-400">
+                    Update: {new Date(latest).toLocaleString('id-ID', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jakarta' })} WIB
+                  </span>
+                ) : null
+              })()}
+            </div>
             <button
               onClick={openAdd}
               className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-md hover:bg-indigo-700"
