@@ -40,17 +40,9 @@ export async function GET() {
 
     await ensureTable()
 
-    // Sertakan lastPrice & lastPriceAt agar frontend tidak perlu hit Yahoo Finance saat load
-    const rows = await prisma.$queryRawUnsafe<{
-      id: string; userId: string; keterangan: string; saham: string
-      hargaRata: number; lot: number; createdAt: string; updatedAt: string
-      lastPrice: number | null; lastPriceAt: string | null
-    }[]>(
-      `SELECT "id","userId","keterangan","saham","hargaRata","lot","createdAt","updatedAt",
-              "lastPrice","lastPriceAt"
-       FROM "portfolios"
-       WHERE "userId" = $1
-       ORDER BY "keterangan" ASC, "saham" ASC`,
+    // SELECT * — bekerja meski kolom lastPrice/lastPriceAt belum ada (migrasi belum jalan)
+    const rows = await prisma.$queryRawUnsafe(
+      `SELECT * FROM "portfolios" WHERE "userId" = $1 ORDER BY "keterangan" ASC, "saham" ASC`,
       userId
     )
     return NextResponse.json(rows)

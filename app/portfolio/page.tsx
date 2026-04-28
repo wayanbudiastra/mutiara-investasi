@@ -107,10 +107,12 @@ export default function PortfolioPage() {
         const initial: Record<string, { price: number | null; isCache: boolean; lastPriceAt: string | null }> = {}
         data.forEach(r => {
           if (!initial[r.saham]) {
+            const lp = (r as any).lastPrice ?? null
+            const la = (r as any).lastPriceAt ?? null
             initial[r.saham] = {
-              price:       r.lastPrice ?? null,
-              isCache:     r.lastPrice != null,
-              lastPriceAt: r.lastPriceAt ?? null,
+              price:       lp,
+              isCache:     lp != null,
+              lastPriceAt: la,
             }
           }
         })
