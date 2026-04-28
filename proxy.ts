@@ -13,4 +13,5 @@ export default withAuth(
 
 export const config = {
   matcher: ['/', '/history', '/profile', '/portfolio', '/dividends', '/securities', '/pricing', '/subscription', '/api/calculations', '/api/profile', '/api/watchlist', '/api/portfolio', '/api/subscription'],
+  // Halaman publik (forgot/reset password) tidak perlu autentikasi — sengaja tidak dimasukkan matcher
 }

@@ -91,6 +91,18 @@ const tables = [
       )`,
   },
   {
+    name: 'password_reset_tokens',
+    sql: `
+      CREATE TABLE IF NOT EXISTS "password_reset_tokens" (
+        "id"        TEXT NOT NULL PRIMARY KEY,
+        "userId"    TEXT NOT NULL,
+        "token"     TEXT NOT NULL UNIQUE,
+        "expiredAt" TEXT NOT NULL,
+        "usedAt"    TEXT,
+        "createdAt" TEXT NOT NULL
+      )`,
+  },
+  {
     name: 'subscriptions',
     sql: `
       CREATE TABLE IF NOT EXISTS "subscriptions" (
