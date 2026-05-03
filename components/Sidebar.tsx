@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useSession, signOut } from 'next-auth/react'
@@ -63,13 +63,18 @@ const navItems = [
   },
 ]
 
-const ADMIN_IDS = (process.env.NEXT_PUBLIC_ADMIN_USER_IDS ?? '').split(',').map(s => s.trim()).filter(Boolean)
-
 function SidebarContent({ onClose }: { onClose?: () => void }) {
   const pathname = usePathname()
-  const { data: session } = useSession()
-  const userId  = (session?.user as any)?.id as string | undefined
-  const isAdmin = !!(userId && ADMIN_IDS.includes(userId))
+  const { data: session, status } = useSession()
+  const [isAdmin, setIsAdmin] = useState(false)
+
+  useEffect(() => {
+    if (status !== 'authenticated') return
+    fetch('/api/subscription/status')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.isAdmin) setIsAdmin(true) })
+      .catch(() => {})
+  }, [status])
 
   return (
     <div className="flex flex-col h-full">
