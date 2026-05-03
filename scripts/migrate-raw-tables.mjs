@@ -91,6 +91,20 @@ const tables = [
       )`,
   },
   {
+    name: 'portfolio_cash',
+    sql: `
+      CREATE TABLE IF NOT EXISTS "portfolio_cash" (
+        "id"         TEXT NOT NULL PRIMARY KEY,
+        "userId"     TEXT NOT NULL,
+        "keterangan" TEXT NOT NULL,
+        "saldo"      DOUBLE PRECISION NOT NULL,
+        "catatan"    TEXT,
+        "createdAt"  TEXT NOT NULL,
+        "updatedAt"  TEXT NOT NULL,
+        UNIQUE("userId", "keterangan")
+      )`,
+  },
+  {
     name: 'password_reset_tokens',
     sql: `
       CREATE TABLE IF NOT EXISTS "password_reset_tokens" (

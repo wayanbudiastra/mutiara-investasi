@@ -48,7 +48,16 @@ interface JournalDetail {
   floatPct: number | null
 }
 
-const emptyForm = { saham: '', hargaRata: '', lot: '' }
+interface CashRow {
+  id: string
+  keterangan: string
+  saldo: number
+  catatan: string | null
+  updatedAt: string
+}
+
+const emptyForm     = { saham: '', hargaRata: '', lot: '' }
+const emptyCashForm = { keterangan: '', saldo: '', catatan: '' }
 
 const rp  = (v: number) => `Rp ${v.toLocaleString('id-ID')}`
 const pct = (v: number) => `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`
@@ -59,7 +68,7 @@ export default function PortfolioPage() {
   const router = useRouter()
 
   const [proAccess, setProAccess]       = useState<{ hasAccess: boolean } | null>(null)
-  const [activeTab, setActiveTab]       = useState<'portofolio' | 'jurnal' | 'gainloss'>('portofolio')
+  const [activeTab, setActiveTab]       = useState<'portofolio' | 'jurnal' | 'gainloss' | 'cash'>('portofolio')
   const [glFilterKet, setGlFilterKet]   = useState('')
   const [glJournalYear, setGlJournalYear] = useState(new Date().getFullYear())
   const [rows, setRows]                 = useState<PortfolioRow[]>([])
@@ -68,6 +77,16 @@ export default function PortfolioPage() {
   const [loadingPrice, setLoadingPrice] = useState(false)
   const [securities, setSecurities]     = useState<Security[]>([])
   const [filterKet, setFilterKet]       = useState('')
+
+  // Cash states
+  const [cashRows, setCashRows]       = useState<CashRow[]>([])
+  const [showCashModal, setShowCashModal] = useState(false)
+  const [editCash, setEditCash]       = useState<CashRow | null>(null)
+  const [cashForm, setCashForm]       = useState(emptyCashForm)
+  const [savingCash, setSavingCash]   = useState(false)
+  const [deletingCashId, setDeletingCashId] = useState<string | null>(null)
+  const [cashSecSearch, setCashSecSearch] = useState('')
+  const [cashSecOpen, setCashSecOpen] = useState(false)
 
   // Jurnal states
   const [journals, setJournals]             = useState<JournalRow[]>([])
@@ -146,13 +165,21 @@ export default function PortfolioPage() {
     } catch { /* silently fail */ }
   }, [])
 
+  const fetchCash = useCallback(async () => {
+    try {
+      const res = await fetch('/api/portfolio/cash')
+      if (res.ok) setCashRows(await res.json())
+    } catch { /* silent */ }
+  }, [])
+
   useEffect(() => {
     if (status !== 'authenticated') return
     fetch('/api/subscription/status').then(r => r.json()).then(setProAccess)
     const userId = (session?.user as any)?.id
     fetchPortfolio()
+    fetchCash()
     if (userId) fetchSecurities(userId)
-  }, [status, session, fetchPortfolio, fetchSecurities])
+  }, [status, session, fetchPortfolio, fetchCash, fetchSecurities])
 
   // Auto-fetch dihapus — harga hanya diperbarui saat user klik "Refresh Harga"
 
@@ -342,6 +369,53 @@ export default function PortfolioPage() {
     }
   }
 
+  // ── Cash handlers ─────────────────────────────────────────────────────────
+
+  const openAddCash = () => {
+    setEditCash(null)
+    setCashForm(emptyCashForm)
+    setCashSecSearch('')
+    setCashSecOpen(false)
+    setShowCashModal(true)
+  }
+
+  const openEditCash = (row: CashRow) => {
+    setEditCash(row)
+    setCashForm({ keterangan: row.keterangan, saldo: String(row.saldo), catatan: row.catatan ?? '' })
+    setCashSecSearch('')
+    setCashSecOpen(false)
+    setShowCashModal(true)
+  }
+
+  const closeCashModal = () => { setShowCashModal(false); setEditCash(null) }
+
+  const handleSaveCash = async () => {
+    if (!cashForm.keterangan || !cashForm.saldo) return
+    setSavingCash(true)
+    try {
+      const payload = {
+        keterangan: cashForm.keterangan,
+        saldo:      parseFloat(cashForm.saldo),
+        catatan:    cashForm.catatan || null,
+      }
+      const res = await fetch(
+        editCash ? `/api/portfolio/cash/${editCash.id}` : '/api/portfolio/cash',
+        { method: editCash ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }
+      )
+      if (res.ok) { closeCashModal(); await fetchCash() }
+      else { const d = await res.json(); alert(d.error ?? 'Gagal menyimpan') }
+    } finally { setSavingCash(false) }
+  }
+
+  const handleDeleteCash = async (row: CashRow) => {
+    if (!confirm(`Hapus cash "${row.keterangan}"?`)) return
+    setDeletingCashId(row.id)
+    try {
+      const res = await fetch(`/api/portfolio/cash/${row.id}`, { method: 'DELETE' })
+      if (res.ok) await fetchCash()
+    } finally { setDeletingCashId(null) }
+  }
+
   // ── Render guard ───────────────────────────────────────────────────────────
 
   if (status === 'loading' || proAccess === null) return null
@@ -375,6 +449,8 @@ export default function PortfolioPage() {
   const totalFloatPct = totalModal > 0 ? (totalFloatRp / totalModal) * 100 : 0
   const hasAllPrices  = filtered.length > 0 && filtered.every(r => getPrice(r.saham) != null)
   const allFromCache  = hasAllPrices && filtered.every(r => getIsCache(r.saham))
+  const totalCash     = cashRows.reduce((s, c) => s + Number(c.saldo), 0)
+  const totalAset     = totalNilaiPasar + totalCash
 
   const floatColor = (v: number | null) =>
     v == null ? 'text-gray-400' : v > 0 ? 'text-green-600' : v < 0 ? 'text-red-600' : 'text-gray-600'
@@ -435,12 +511,14 @@ export default function PortfolioPage() {
         </div>
 
         {/* Summary Cards */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
           {[
-            { label: 'Total Modal',      val: rp(totalModal),      color: 'text-gray-900',           show: true },
+            { label: 'Total Modal',       val: rp(totalModal),      color: 'text-gray-900',           show: true },
             { label: 'Total Nilai Pasar', val: rp(totalNilaiPasar), color: 'text-gray-900',           show: hasAllPrices },
             { label: 'Floating P/L',      val: rp(totalFloatRp),    color: floatColor(hasAllPrices ? totalFloatRp : null), show: hasAllPrices },
             { label: 'Floating P/L (%)',  val: pct(totalFloatPct),  color: floatColor(hasAllPrices ? totalFloatPct : null), show: hasAllPrices },
+            { label: 'Total Cash',        val: rp(totalCash),       color: 'text-blue-600',           show: true },
+            { label: 'Total Aset',        val: rp(hasAllPrices ? totalAset : totalCash + totalModal), color: 'text-indigo-700', show: true },
           ].map(c => (
             <div key={c.label} className="bg-white rounded-lg shadow p-4">
               <p className="text-xs text-gray-500 mb-1">{c.label}</p>
@@ -454,7 +532,7 @@ export default function PortfolioPage() {
         {/* Tabs */}
         <div className="border-b border-gray-200 mb-6">
           <nav className="flex gap-6">
-            {([['portofolio','Portofolio'],['jurnal','Jurnal'],['gainloss','Gain/Loss']] as const).map(([tab, label]) => (
+            {([['portofolio','Portofolio'],['jurnal','Jurnal'],['gainloss','Gain/Loss'],['cash','Cash']] as const).map(([tab, label]) => (
               <button key={tab} onClick={() => setActiveTab(tab)}
                 className={`pb-3 text-sm font-medium border-b-2 transition-colors ${
                   activeTab === tab ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'
@@ -1048,6 +1126,84 @@ export default function PortfolioPage() {
           )}
         </div>
         </>}
+
+        {/* ── TAB CASH ────────────────────────────────────────────────────────── */}
+        {activeTab === 'cash' && (
+          <div>
+            {/* Header */}
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
+              <div>
+                <h2 className="text-lg font-bold text-gray-900">Standby Cash</h2>
+                <p className="text-xs text-gray-500 mt-0.5">Saldo kas yang belum diinvestasikan per akun sekuritas</p>
+              </div>
+              <button onClick={openAddCash}
+                className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+                Tambah Cash
+              </button>
+            </div>
+
+            {/* Tabel */}
+            <div className="bg-white shadow sm:rounded-lg overflow-hidden">
+              {cashRows.length === 0 ? (
+                <div className="p-12 text-center text-gray-500">
+                  Belum ada catatan cash. Klik <span className="font-semibold text-blue-600">Tambah Cash</span> untuk mulai.
+                </div>
+              ) : (
+                <>
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full text-sm divide-y divide-gray-100">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          {['No','Akun Sekuritas','Saldo Cash','Catatan','Terakhir Diperbarui','Aksi'].map(h => (
+                            <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {cashRows.map((c, idx) => (
+                          <tr key={c.id} className="hover:bg-gray-50">
+                            <td className="px-4 py-3 text-gray-400 text-xs">{idx + 1}</td>
+                            <td className="px-4 py-3 font-medium text-gray-900 whitespace-nowrap">{c.keterangan}</td>
+                            <td className="px-4 py-3 font-semibold text-blue-700 whitespace-nowrap">{rp(c.saldo)}</td>
+                            <td className="px-4 py-3 text-gray-500 text-xs">
+                              {c.catatan ?? <span className="text-gray-300">—</span>}
+                            </td>
+                            <td className="px-4 py-3 text-gray-500 text-xs whitespace-nowrap">
+                              {fmtDate(c.updatedAt.slice(0, 10))}
+                            </td>
+                            <td className="px-4 py-3">
+                              <div className="flex items-center gap-3">
+                                <button onClick={() => openEditCash(c)}
+                                  className="text-xs text-indigo-600 hover:text-indigo-800 font-medium">Edit</button>
+                                <button
+                                  onClick={() => handleDeleteCash(c)}
+                                  disabled={deletingCashId === c.id}
+                                  className="text-xs text-red-600 hover:text-red-800 disabled:opacity-50">
+                                  {deletingCashId === c.id ? '...' : 'Hapus'}
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  {/* Total */}
+                  <div className="bg-gray-50 px-4 py-3 border-t border-gray-200 flex justify-between items-center">
+                    <span className="text-sm text-gray-600">{cashRows.length} akun</span>
+                    <span className="text-sm font-bold text-blue-700">
+                      Total Cash: {rp(totalCash)}
+                    </span>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
       </div>
 
       {/* Modal tambah/edit posisi */}
@@ -1345,6 +1501,132 @@ export default function PortfolioPage() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal tambah/edit Cash */}
+      {showCashModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="fixed inset-0 bg-black/40" onClick={closeCashModal} />
+          <div className="relative z-50 bg-white rounded-xl shadow-2xl w-full max-w-sm mx-4 p-6">
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="text-base font-bold text-gray-900">
+                {editCash ? 'Edit Cash' : 'Tambah Cash'}
+              </h2>
+              <button onClick={closeCashModal} className="text-gray-400 hover:text-gray-600">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              {/* Akun Sekuritas */}
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">
+                  Akun Sekuritas <span className="text-red-500">*</span>
+                </label>
+                {editCash ? (
+                  <div className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm bg-gray-50 text-gray-700 font-medium">
+                    {cashForm.keterangan}
+                  </div>
+                ) : securities.length === 0 ? (
+                  <div className="rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
+                    Belum ada sekuritas aktif.{' '}
+                    <a href="/securities" className="font-semibold underline">Daftarkan sekuritas</a> terlebih dahulu.
+                  </div>
+                ) : (
+                  <div className="relative">
+                    <button type="button" onClick={() => setCashSecOpen(o => !o)}
+                      className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-left flex items-center justify-between focus:outline-none focus:ring-1 focus:ring-blue-500">
+                      <span className={cashForm.keterangan ? 'text-gray-900' : 'text-gray-400'}>
+                        {cashForm.keterangan || '-- Pilih Akun Sekuritas --'}
+                      </span>
+                      <svg className={`w-4 h-4 text-gray-400 transition-transform ${cashSecOpen ? 'rotate-180' : ''}`}
+                        fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </button>
+                    {cashSecOpen && (
+                      <>
+                        <div className="absolute z-50 mt-1 w-full bg-white border border-gray-200 rounded-md shadow-lg">
+                          <div className="p-2 border-b border-gray-100">
+                            <input autoFocus type="text" value={cashSecSearch}
+                              onChange={e => setCashSecSearch(e.target.value)}
+                              placeholder="Cari sekuritas..."
+                              className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                          </div>
+                          <ul className="max-h-48 overflow-y-auto">
+                            {securities
+                              .filter(s => {
+                                const alreadyHasCash = cashRows.some(c => c.keterangan === s.nama.toUpperCase().trim())
+                                return !alreadyHasCash && s.nama.toLowerCase().includes(cashSecSearch.toLowerCase())
+                              })
+                              .length === 0 ? (
+                              <li className="px-3 py-2 text-sm text-gray-400 text-center">Tidak ada akun tersedia</li>
+                            ) : (
+                              securities
+                                .filter(s => {
+                                  const alreadyHasCash = cashRows.some(c => c.keterangan === s.nama.toUpperCase().trim())
+                                  return !alreadyHasCash && s.nama.toLowerCase().includes(cashSecSearch.toLowerCase())
+                                })
+                                .map(s => (
+                                  <li key={s.id}
+                                    onClick={() => {
+                                      setCashForm(f => ({ ...f, keterangan: s.nama }))
+                                      setCashSecOpen(false)
+                                      setCashSecSearch('')
+                                    }}
+                                    className="px-3 py-2 text-sm cursor-pointer hover:bg-blue-50 hover:text-blue-700 text-gray-900">
+                                    {s.nama}
+                                  </li>
+                                ))
+                            )}
+                          </ul>
+                        </div>
+                        <div className="fixed inset-0 z-40" onClick={() => { setCashSecOpen(false); setCashSecSearch('') }} />
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Saldo */}
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">
+                  Saldo Cash (Rp) <span className="text-red-500">*</span>
+                </label>
+                <input type="number" value={cashForm.saldo} min={0}
+                  onChange={e => setCashForm(f => ({ ...f, saldo: e.target.value }))}
+                  placeholder="5000000"
+                  className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-blue-500 focus:border-blue-500" />
+                {cashForm.saldo && (
+                  <p className="text-xs text-gray-500 mt-0.5">{rp(parseFloat(cashForm.saldo) || 0)}</p>
+                )}
+              </div>
+
+              {/* Catatan */}
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Catatan (opsional)</label>
+                <input type="text" value={cashForm.catatan}
+                  onChange={e => setCashForm(f => ({ ...f, catatan: e.target.value }))}
+                  placeholder="cth: Menunggu koreksi BBRI"
+                  className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-blue-500 focus:border-blue-500" />
+              </div>
+            </div>
+
+            <div className="mt-6 flex gap-3 justify-end">
+              <button onClick={closeCashModal}
+                className="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50">
+                Batal
+              </button>
+              <button onClick={handleSaveCash}
+                disabled={savingCash || !cashForm.keterangan || !cashForm.saldo}
+                className="px-4 py-2 text-sm font-semibold text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">
+                {savingCash ? 'Menyimpan...' : editCash ? 'Simpan Perubahan' : 'Tambah'}
+              </button>
             </div>
           </div>
         </div>
