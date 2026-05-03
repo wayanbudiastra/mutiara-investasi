@@ -150,6 +150,8 @@ const tables = [
 
 // Kolom tambahan (ALTER TABLE — aman jika sudah ada)
 const alterations = [
+  `ALTER TABLE "portfolio_journals" ADD COLUMN IF NOT EXISTS "totalCash" DOUBLE PRECISION NOT NULL DEFAULT 0`,
+  `ALTER TABLE "portfolio_journals" ADD COLUMN IF NOT EXISTS "totalAset" DOUBLE PRECISION NOT NULL DEFAULT 0`,
   `ALTER TABLE "subscriptions" ADD COLUMN IF NOT EXISTS "grantedBy" TEXT`,
   `ALTER TABLE "subscriptions" ADD COLUMN IF NOT EXISTS "grantNote" TEXT`,
   `ALTER TABLE "subscriptions" ADD COLUMN IF NOT EXISTS "isGranted" BOOLEAN NOT NULL DEFAULT FALSE`,

@@ -33,7 +33,23 @@ interface JournalRow {
   totalNilaiPasar: number
   totalFloatRp: number
   totalFloatPct: number
+  totalCash: number
+  totalAset: number
   detail: string
+}
+
+interface CashSnapshot {
+  keterangan: string
+  saldo: number
+  catatan: string | null
+}
+
+function parseDetail(detailStr: string): { stocks: JournalDetail[]; cashSnapshot: CashSnapshot[] } {
+  try {
+    const p = JSON.parse(detailStr)
+    if (Array.isArray(p)) return { stocks: p as JournalDetail[], cashSnapshot: [] }
+    return { stocks: p.stocks ?? [], cashSnapshot: p.cashSnapshot ?? [] }
+  } catch { return { stocks: [], cashSnapshot: [] } }
 }
 
 interface JournalDetail {
@@ -321,12 +337,20 @@ export default function PortfolioPage() {
       const totalFloatRp    = totalNilaiPasar - totalModal
       const totalFloatPct   = totalModal > 0 ? (totalFloatRp / totalModal) * 100 : 0
 
+      // Sertakan cash snapshot
+      const totalCash    = cashRows.reduce((s, c) => s + Number(c.saldo), 0)
+      const totalAset    = totalNilaiPasar + totalCash
+      const cashSnapshot = cashRows.map(c => ({ keterangan: c.keterangan, saldo: c.saldo, catatan: c.catatan }))
+
       setPreviewData(detail)
       setShowConfirm(true)
       setSavingJournal(false)
 
-      // Simpan state untuk konfirmasi
-      ;(window as any).__journalPayload = { totalModal, totalNilaiPasar, totalFloatRp, totalFloatPct, detail }
+      ;(window as any).__journalPayload = {
+        totalModal, totalNilaiPasar, totalFloatRp, totalFloatPct,
+        totalCash, totalAset,
+        detail: { stocks: detail, cashSnapshot },
+      }
     } catch {
       setSavingJournal(false)
     }
@@ -553,17 +577,17 @@ export default function PortfolioPage() {
           // YTD summary
           const lastJ  = journals[journals.length - 1]
           const firstJ = journals[0]
-          const ytdGrowth = firstJ && lastJ
-            ? lastJ.totalNilaiPasar - firstJ.totalNilaiPasar
-            : 0
+          const asetLast  = (j: typeof lastJ | undefined) => j ? (j.totalAset > 0 ? j.totalAset : j.totalNilaiPasar) : 0
+          const ytdGrowth = firstJ && lastJ ? asetLast(lastJ) - asetLast(firstJ) : 0
 
-          // Chart data
+          // Chart data — dua garis: Nilai Pasar & Total Aset
           const chartData = journals.map(j => ({
-            date: j.journalDate.slice(5), // MM-DD
-            nilai: Math.round(j.totalNilaiPasar / 1000), // dalam ribu
+            date:  j.journalDate.slice(5),
+            nilai: Math.round(j.totalNilaiPasar / 1000),
+            aset:  Math.round((j.totalAset > 0 ? j.totalAset : j.totalNilaiPasar) / 1000),
             modal: Math.round(j.totalModal / 1000),
           }))
-          const chartColor = lastJ && firstJ && lastJ.totalNilaiPasar >= firstJ.totalNilaiPasar ? '#16a34a' : '#dc2626'
+          const chartColor = lastJ && firstJ && asetLast(lastJ) >= asetLast(firstJ) ? '#16a34a' : '#dc2626'
 
           return (
             <div>
@@ -590,12 +614,14 @@ export default function PortfolioPage() {
               </div>
 
               {/* Summary cards YTD */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
                 {[
-                  { label: 'Jurnal Tercatat', val: `${journals.length} hari`, color: 'text-gray-900' },
-                  { label: 'Nilai Pasar Terakhir', val: lastJ ? rp(lastJ.totalNilaiPasar) : '—', color: 'text-gray-900' },
-                  { label: 'Float P/L Terakhir', val: lastJ ? rp(lastJ.totalFloatRp) : '—', color: lastJ ? floatColor(lastJ.totalFloatRp) : 'text-gray-400' },
-                  { label: `Pertumbuhan ${journalYear}`, val: journals.length > 1 ? rp(ytdGrowth) : '—', color: floatColor(journals.length > 1 ? ytdGrowth : null) },
+                  { label: 'Jurnal Tercatat',     val: `${journals.length} hari`,                                                                  color: 'text-gray-900' },
+                  { label: 'Nilai Pasar Terakhir', val: lastJ ? rp(lastJ.totalNilaiPasar) : '—',                                                   color: 'text-gray-900' },
+                  { label: 'Float P/L Terakhir',   val: lastJ ? rp(lastJ.totalFloatRp) : '—',   color: lastJ ? floatColor(lastJ.totalFloatRp) : 'text-gray-400' },
+                  { label: 'Total Cash Terakhir',  val: lastJ ? rp(lastJ.totalCash ?? 0) : '—', color: 'text-blue-600' },
+                  { label: 'Total Aset Terakhir',  val: lastJ ? rp(asetLast(lastJ)) : '—',      color: 'text-indigo-700' },
+                  { label: `Pertumbuhan Aset ${journalYear}`, val: journals.length > 1 ? rp(ytdGrowth) : '—', color: floatColor(journals.length > 1 ? ytdGrowth : null) },
                 ].map(c => (
                   <div key={c.label} className="bg-white rounded-lg shadow p-4">
                     <p className="text-xs text-gray-500 mb-1">{c.label}</p>
@@ -623,7 +649,8 @@ export default function PortfolioPage() {
                           <XAxis dataKey="date" tick={{ fontSize: 10 }} />
                           <YAxis tick={{ fontSize: 10 }} tickFormatter={v => `${v}rb`} width={55} />
                           <Tooltip formatter={(v: number) => [`Rp ${(v * 1000).toLocaleString('id-ID')}`, 'Nilai Pasar']} />
-                          <Line type="monotone" dataKey="nilai" stroke={chartColor} strokeWidth={2} dot={false} />
+                          <Line type="monotone" dataKey="nilai" name="Nilai Pasar" stroke="#6366f1" strokeWidth={1.5} dot={false} strokeDasharray="4 2" />
+                          <Line type="monotone" dataKey="aset"  name="Total Aset"  stroke={chartColor} strokeWidth={2.5} dot={false} />
                         </LineChart>
                       </ResponsiveContainer>
                     </div>
@@ -640,13 +667,19 @@ export default function PortfolioPage() {
                           <table className="min-w-full text-sm divide-y divide-gray-100">
                             <thead className="bg-gray-50">
                               <tr>
-                                {['No','Tanggal','Total Modal','Nilai Pasar','Float P/L (Rp)','Float P/L (%)','Aksi'].map(h => (
+                                {['No','Tanggal','Total Modal','Nilai Pasar','Total Cash','Total Aset','Float P/L (Rp)','Float P/L (%)','ΔAset','Aksi'].map(h => (
                                   <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
                                 ))}
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-100">
-                              {paged.map((j, idx) => (
+                              {paged.map((j, idx) => {
+                                const globalIdx = sorted.indexOf(j)
+                                const prevJ     = sorted[globalIdx + 1]
+                                const jAset     = j.totalAset > 0 ? j.totalAset : j.totalNilaiPasar
+                                const pAset     = prevJ ? (prevJ.totalAset > 0 ? prevJ.totalAset : prevJ.totalNilaiPasar) : null
+                                const deltaAset = pAset != null ? jAset - pAset : null
+                                return (
                                 <tr key={j.id} className="hover:bg-gray-50">
                                   <td className="px-4 py-3 text-gray-400 text-xs">{(journalPage - 1) * JOURNAL_PAGE_SIZE + idx + 1}</td>
                                   <td className="px-4 py-3 text-gray-900 whitespace-nowrap font-medium">
@@ -655,8 +688,13 @@ export default function PortfolioPage() {
                                   </td>
                                   <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{rp(j.totalModal)}</td>
                                   <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{rp(j.totalNilaiPasar)}</td>
+                                  <td className="px-4 py-3 text-blue-600 font-semibold whitespace-nowrap">{rp(j.totalCash ?? 0)}</td>
+                                  <td className="px-4 py-3 text-indigo-700 font-semibold whitespace-nowrap">{rp(jAset)}</td>
                                   <td className={`px-4 py-3 font-semibold whitespace-nowrap ${floatColor(j.totalFloatRp)}`}>{rp(j.totalFloatRp)}</td>
                                   <td className={`px-4 py-3 font-semibold whitespace-nowrap ${floatColor(j.totalFloatPct)}`}>{pct(j.totalFloatPct)}</td>
+                                  <td className={`px-4 py-3 font-semibold whitespace-nowrap ${floatColor(deltaAset)}`}>
+                                    {deltaAset != null ? `${deltaAset >= 0 ? '+' : ''}${rp(deltaAset)}` : <span className="text-gray-300">—</span>}
+                                  </td>
                                   <td className="px-4 py-3">
                                     <div className="flex items-center gap-3">
                                       <button onClick={() => setDetailJournal(j)}
@@ -675,7 +713,8 @@ export default function PortfolioPage() {
                                     </div>
                                   </td>
                                 </tr>
-                              ))}
+                                )
+                              })}
                             </tbody>
                           </table>
                         </div>
@@ -1386,17 +1425,34 @@ export default function PortfolioPage() {
 
             {/* Summary preview */}
             {(() => {
-              const totalM  = previewData.reduce((s, d) => s + d.modal, 0)
-              const totalNP = previewData.reduce((s, d) => s + (d.nilaiPasar ?? d.modal), 0)
-              const totalF  = totalNP - totalM
-              const totalFP = totalM > 0 ? (totalF / totalM) * 100 : 0
+              const totalM   = previewData.reduce((s, d) => s + d.modal, 0)
+              const totalNP  = previewData.reduce((s, d) => s + (d.nilaiPasar ?? d.modal), 0)
+              const totalF   = totalNP - totalM
+              const totalFP  = totalM > 0 ? (totalF / totalM) * 100 : 0
+              const tCash    = cashRows.reduce((s, c) => s + Number(c.saldo), 0)
+              const tAset    = totalNP + tCash
               return (
-                <div className="bg-gray-50 rounded-lg p-3 mb-4 grid grid-cols-2 gap-2 text-sm">
-                  <div><span className="text-gray-500">Total Modal:</span> <span className="font-semibold">{rp(totalM)}</span></div>
-                  <div><span className="text-gray-500">Nilai Pasar:</span> <span className="font-semibold">{rp(totalNP)}</span></div>
-                  <div><span className="text-gray-500">Floating P/L:</span> <span className={`font-semibold ${floatColor(totalF)}`}>{rp(totalF)}</span></div>
-                  <div><span className="text-gray-500">Float %:</span> <span className={`font-semibold ${floatColor(totalFP)}`}>{pct(totalFP)}</span></div>
-                </div>
+                <>
+                  <div className="bg-gray-50 rounded-lg p-3 mb-3 grid grid-cols-2 gap-2 text-sm">
+                    <div><span className="text-gray-500">Total Modal:</span> <span className="font-semibold">{rp(totalM)}</span></div>
+                    <div><span className="text-gray-500">Nilai Pasar:</span> <span className="font-semibold">{rp(totalNP)}</span></div>
+                    <div><span className="text-gray-500">Floating P/L:</span> <span className={`font-semibold ${floatColor(totalF)}`}>{rp(totalF)}</span></div>
+                    <div><span className="text-gray-500">Float %:</span> <span className={`font-semibold ${floatColor(totalFP)}`}>{pct(totalFP)}</span></div>
+                    <div><span className="text-gray-500">Total Cash:</span> <span className="font-semibold text-blue-600">{rp(tCash)}</span></div>
+                    <div><span className="text-gray-500">Total Aset:</span> <span className="font-semibold text-indigo-700">{rp(tAset)}</span></div>
+                  </div>
+                  {cashRows.length > 0 && (
+                    <div className="bg-blue-50 rounded-lg px-3 py-2 mb-3">
+                      <p className="text-xs font-semibold text-blue-700 mb-1">Cash per Akun:</p>
+                      {cashRows.map(c => (
+                        <div key={c.id} className="flex justify-between text-xs text-blue-800">
+                          <span>{c.keterangan}</span>
+                          <span className="font-semibold">{rp(c.saldo)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
               )
             })()}
 
@@ -1459,30 +1515,40 @@ export default function PortfolioPage() {
                 </svg>
               </button>
             </div>
-            <div className="bg-gray-50 rounded-lg p-3 mb-4 grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
-              {[
-                { l: 'Modal', v: rp(detailJournal.totalModal), c: 'text-gray-900' },
-                { l: 'Nilai Pasar', v: rp(detailJournal.totalNilaiPasar), c: 'text-gray-900' },
-                { l: 'Float P/L', v: rp(detailJournal.totalFloatRp), c: floatColor(detailJournal.totalFloatRp) },
-                { l: 'Float %', v: pct(detailJournal.totalFloatPct), c: floatColor(detailJournal.totalFloatPct) },
-              ].map(x => (
-                <div key={x.l}>
-                  <p className="text-gray-500">{x.l}</p>
-                  <p className={`font-bold ${x.c}`}>{x.v}</p>
-                </div>
-              ))}
-            </div>
-            <div className="overflow-x-auto max-h-64 overflow-y-auto">
-              <table className="min-w-full text-xs">
-                <thead className="bg-gray-50 sticky top-0">
-                  <tr>
-                    {['Akun','Saham','Avg Price','Lot','Modal','Harga Saat Jurnal','Nilai Pasar','Float P/L','Float %'].map(h => (
-                      <th key={h} className="px-3 py-2 text-left font-semibold text-gray-500 whitespace-nowrap">{h}</th>
+            {(() => {
+              const { stocks, cashSnapshot } = parseDetail(detailJournal.detail)
+              const jAset = detailJournal.totalAset > 0 ? detailJournal.totalAset : detailJournal.totalNilaiPasar
+              return (
+                <>
+                  <div className="bg-gray-50 rounded-lg p-3 mb-4 grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
+                    {[
+                      { l: 'Modal',       v: rp(detailJournal.totalModal),      c: 'text-gray-900' },
+                      { l: 'Nilai Pasar', v: rp(detailJournal.totalNilaiPasar), c: 'text-gray-900' },
+                      { l: 'Float P/L',   v: rp(detailJournal.totalFloatRp),    c: floatColor(detailJournal.totalFloatRp) },
+                      { l: 'Float %',     v: pct(detailJournal.totalFloatPct),  c: floatColor(detailJournal.totalFloatPct) },
+                      { l: 'Total Cash',  v: rp(detailJournal.totalCash ?? 0),  c: 'text-blue-600' },
+                      { l: 'Total Aset',  v: rp(jAset),                         c: 'text-indigo-700' },
+                    ].map(x => (
+                      <div key={x.l}>
+                        <p className="text-gray-500">{x.l}</p>
+                        <p className={`font-bold ${x.c}`}>{x.v}</p>
+                      </div>
                     ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {(JSON.parse(detailJournal.detail) as JournalDetail[]).map((d, i) => (
+                  </div>
+
+                  {/* Snapshot saham */}
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Posisi Saham</p>
+                  <div className="overflow-x-auto max-h-52 overflow-y-auto mb-4">
+                    <table className="min-w-full text-xs">
+                      <thead className="bg-gray-50 sticky top-0">
+                        <tr>
+                          {['Akun','Saham','Avg Price','Lot','Modal','Harga Saat Jurnal','Nilai Pasar','Float P/L','Float %'].map(h => (
+                            <th key={h} className="px-3 py-2 text-left font-semibold text-gray-500 whitespace-nowrap">{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {stocks.map((d, i) => (
                     <tr key={i} className="hover:bg-gray-50">
                       <td className="px-3 py-2 text-gray-700 whitespace-nowrap">{d.keterangan}</td>
                       <td className="px-3 py-2 font-bold text-indigo-700">{d.saham}</td>
@@ -1497,11 +1563,50 @@ export default function PortfolioPage() {
                       <td className={`px-3 py-2 font-semibold whitespace-nowrap ${floatColor(d.floatPct)}`}>
                         {d.floatPct != null ? pct(d.floatPct) : '—'}
                       </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                        </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Saldo Cash saat Jurnal */}
+                  {cashSnapshot.length > 0 && (
+                    <div className="mt-3">
+                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Saldo Cash</p>
+                      <div className="bg-blue-50 rounded-lg overflow-hidden">
+                        <table className="min-w-full text-xs">
+                          <thead className="bg-blue-100">
+                            <tr>
+                              <th className="px-3 py-2 text-left font-semibold text-blue-700">Akun</th>
+                              <th className="px-3 py-2 text-right font-semibold text-blue-700">Saldo</th>
+                              <th className="px-3 py-2 text-left font-semibold text-blue-700">Catatan</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-blue-100">
+                            {cashSnapshot.map((c, i) => (
+                              <tr key={i}>
+                                <td className="px-3 py-2 text-gray-800 font-medium">{c.keterangan}</td>
+                                <td className="px-3 py-2 text-right font-semibold text-blue-700">{rp(c.saldo)}</td>
+                                <td className="px-3 py-2 text-gray-500">{c.catatan ?? '—'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                          <tfoot className="bg-blue-100">
+                            <tr>
+                              <td className="px-3 py-2 font-bold text-blue-800">Total Cash</td>
+                              <td className="px-3 py-2 text-right font-bold text-blue-800">
+                                {rp(cashSnapshot.reduce((s, c) => s + c.saldo, 0))}
+                              </td>
+                              <td />
+                            </tr>
+                          </tfoot>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )
+            })()}
           </div>
         </div>
       )}
