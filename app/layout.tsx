@@ -7,8 +7,8 @@ import './globals.css'
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: 'Stock Calculator',
-  description: 'Calculate stock profits and losses',
+  title: 'Mutiara Investasi',
+  description: 'Platform rekap investasi saham — portofolio, dividen, dan simulasi',
 }
 
 export default function RootLayout({

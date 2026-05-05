@@ -88,7 +88,7 @@ function SidebarContent({ onClose }: { onClose?: () => void }) {
             </svg>
           </div>
           <span className="text-sm font-bold text-gray-900 leading-tight">
-            Kalkulator<br />Saham
+            Mutiara<br />Investasi
           </span>
         </div>
         {onClose && (
@@ -232,7 +232,7 @@ export function Sidebar() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
             </svg>
           </div>
-          <span className="text-sm font-bold text-gray-900">Kalkulator Saham</span>
+          <span className="text-sm font-bold text-gray-900">Mutiara Investasi</span>
         </div>
       </div>
 
