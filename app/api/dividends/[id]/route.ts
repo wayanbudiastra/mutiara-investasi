@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { revalidateTag } from 'next/cache'
 
 export async function PUT(
   request: NextRequest,
@@ -26,6 +27,10 @@ export async function PUT(
       body.keterangan, body.status,
       now, id, userId
     )
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-ignore
+    // @ts-ignore
+    revalidateTag(`dividen-list:${userId}`)
     return NextResponse.json({ ok: true })
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 400 })
@@ -46,6 +51,8 @@ export async function DELETE(
       `DELETE FROM "dividends" WHERE "id"=$1 AND "userId"=$2`,
       id, userId
     )
+    // @ts-ignore
+    revalidateTag(`dividen-list:${userId}`)
     return NextResponse.json({ ok: true })
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 400 })
