@@ -50,7 +50,7 @@ export default function AdminPage() {
   const [search, setSearch]       = useState('')
   const [filterPlan, setFilterPlan] = useState('')
 
-  // Modal state
+  // Modal grant state
   const [grantTarget, setGrantTarget]   = useState<UserRow | null>(null)
   const [duration, setDuration]         = useState(30)
   const [customDays, setCustomDays]     = useState('')
@@ -58,6 +58,11 @@ export default function AdminPage() {
   const [selectedDuration, setSelectedDuration] = useState(30)
   const [saving, setSaving]             = useState(false)
   const [toastMsg, setToastMsg]         = useState('')
+
+  // Modal aktivitas
+  const [activityTarget, setActivityTarget] = useState<UserRow | null>(null)
+  const [activities, setActivities]         = useState<{ type: string; description: string; createdAt: string }[]>([])
+  const [loadingActivity, setLoadingActivity] = useState(false)
 
   useEffect(() => {
     if (status === 'unauthenticated') router.push('/login')
@@ -73,6 +78,18 @@ export default function AdminPage() {
   useEffect(() => { if (status === 'authenticated') fetchUsers() }, [status, fetchUsers])
 
   const toast = (msg: string) => { setToastMsg(msg); setTimeout(() => setToastMsg(''), 3000) }
+
+  const openActivity = async (u: UserRow) => {
+    setActivityTarget(u)
+    setActivities([])
+    setLoadingActivity(true)
+    try {
+      const res = await fetch(`/api/admin/activity?userId=${u.id}`)
+      if (res.ok) setActivities(await res.json())
+    } finally {
+      setLoadingActivity(false)
+    }
+  }
 
   const handleGrant = async () => {
     if (!grantTarget) return
@@ -310,6 +327,12 @@ export default function AdminPage() {
                               </button>
                             </>
                           )}
+                          <button
+                            onClick={() => openActivity(u)}
+                            className="px-2 py-1 text-xs font-medium bg-gray-100 text-gray-600 rounded hover:bg-gray-200 whitespace-nowrap"
+                          >
+                            Aktivitas
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -320,6 +343,62 @@ export default function AdminPage() {
           </div>
         </div>
       </div>
+
+      {/* Modal Aktivitas User */}
+      {activityTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="fixed inset-0 bg-black/40" onClick={() => setActivityTarget(null)} />
+          <div className="relative z-50 bg-white rounded-xl shadow-2xl w-full max-w-lg mx-4 p-6">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-base font-bold text-gray-900">Aktivitas Terakhir</h2>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  {activityTarget.name ?? activityTarget.email} — 20 aktivitas terbaru
+                </p>
+              </div>
+              <button onClick={() => setActivityTarget(null)} className="text-gray-400 hover:text-gray-600">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {loadingActivity ? (
+              <div className="py-10 text-center text-gray-400 text-sm">Memuat aktivitas...</div>
+            ) : activities.length === 0 ? (
+              <div className="py-10 text-center text-gray-400 text-sm">Belum ada aktivitas tercatat</div>
+            ) : (
+              <div className="max-h-96 overflow-y-auto space-y-2">
+                {activities.map((a, i) => {
+                  const typeColor: Record<string, string> = {
+                    Simulasi:   'bg-indigo-100 text-indigo-700',
+                    Dividen:    'bg-green-100 text-green-700',
+                    Portofolio: 'bg-blue-100 text-blue-700',
+                    Jurnal:     'bg-amber-100 text-amber-700',
+                    Cash:       'bg-cyan-100 text-cyan-700',
+                    Sekuritas:  'bg-purple-100 text-purple-700',
+                  }
+                  const tanggal = new Date(a.createdAt).toLocaleString('id-ID', {
+                    day: 'numeric', month: 'short', year: 'numeric',
+                    hour: '2-digit', minute: '2-digit',
+                  })
+                  return (
+                    <div key={i} className="flex items-start gap-3 p-3 rounded-lg bg-gray-50 hover:bg-gray-100">
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-bold whitespace-nowrap flex-shrink-0 ${typeColor[a.type] ?? 'bg-gray-100 text-gray-600'}`}>
+                        {a.type}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs text-gray-800 truncate">{a.description}</p>
+                        <p className="text-xs text-gray-400 mt-0.5">{tanggal}</p>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Modal Grant Akses */}
       {grantTarget && (
