@@ -4,6 +4,8 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { randomUUID } from 'crypto'
+import { revalidateTag } from 'next/cache'
+import { getCachedDividens } from '@/lib/cache/dividen'
 
 async function ensureTable() {
   await prisma.$executeRawUnsafe(`
@@ -32,18 +34,8 @@ export async function GET(_request: NextRequest) {
 
     await ensureTable()
 
-    // ESTIMASI: semua data tanpa limit (supaya filter selalu lengkap)
-    // DONE: maksimal 500 data terbaru (cukup untuk keperluan rekap)
-    const rows = await prisma.$queryRawUnsafe(
-      `SELECT * FROM "dividends" WHERE "userId" = $1 AND "status" = 'ESTIMASI'
-       UNION ALL
-       SELECT * FROM (
-         SELECT * FROM "dividends" WHERE "userId" = $1 AND "status" = 'DONE'
-         ORDER BY "tahun" DESC, "createdAt" DESC LIMIT 500
-       ) done_rows
-       ORDER BY "tahun" DESC, "createdAt" DESC`,
-      userId
-    )
+    // Gunakan cache — query DB hanya saat cache MISS atau setelah mutasi
+    const rows = await getCachedDividens(userId)
     return NextResponse.json(rows)
   } catch (error) {
     console.error('GET dividends error:', error)
@@ -60,7 +52,7 @@ export async function POST(request: NextRequest) {
     await ensureTable()
 
     const body = await request.json()
-    const id = randomUUID()
+    const id  = randomUUID()
     const now = new Date().toISOString()
 
     await prisma.$executeRawUnsafe(
@@ -72,6 +64,11 @@ export async function POST(request: NextRequest) {
       body.keterangan, body.status,
       now, now
     )
+
+    // Invalidasi cache setelah tambah data
+    // @ts-ignore
+    revalidateTag(`dividen-list:${userId}`)
+
     return NextResponse.json({ id }, { status: 201 })
   } catch (error) {
     console.error('POST dividends error:', error)
