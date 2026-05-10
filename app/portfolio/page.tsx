@@ -7,7 +7,9 @@ import { ProGate } from '@/components/ProGate'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer,
+  PieChart, Pie, Cell,
 } from 'recharts'
+import { getChartColor } from '@/lib/chartColors'
 
 interface PortfolioRow {
   id: string
@@ -84,9 +86,18 @@ export default function PortfolioPage() {
   const router = useRouter()
 
   const [proAccess, setProAccess]       = useState<{ hasAccess: boolean } | null>(null)
-  const [activeTab, setActiveTab]       = useState<'portofolio' | 'jurnal' | 'gainloss' | 'cash'>('portofolio')
+  const [activeTab, setActiveTab]       = useState<'portofolio' | 'jurnal' | 'gainloss' | 'cash' | 'alokasi'>('portofolio')
   const [glFilterKet, setGlFilterKet]   = useState('')
   const [glJournalYear, setGlJournalYear] = useState(new Date().getFullYear())
+
+  // Alokasi states
+  const [alokasiYear, setAlokasiYear]   = useState(new Date().getFullYear())
+  const [alokasiData, setAlokasiData]   = useState<{
+    snapshot_date: string | null; year: number
+    total_nilai_pasar: number; jumlah_emiten: number
+    data: { kode_saham: string; nilai_pasar: number; porsi_persen: number }[]
+  } | null>(null)
+  const [loadingAlokasi, setLoadingAlokasi] = useState(false)
   const [rows, setRows]                 = useState<PortfolioRow[]>([])
   const [prices, setPrices]             = useState<Record<string, { price: number | null; isCache: boolean; lastPriceAt: string | null }>>({})
   const [loadingData, setLoadingData]   = useState(false)
@@ -180,6 +191,22 @@ export default function PortfolioPage() {
       }
     } catch { /* silently fail */ }
   }, [])
+
+  const fetchAlokasi = useCallback(async (year: number) => {
+    setLoadingAlokasi(true)
+    try {
+      const res = await fetch(`/api/portfolio/alokasi?year=${year}`)
+      if (res.ok) setAlokasiData(await res.json())
+    } finally {
+      setLoadingAlokasi(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (status === 'authenticated' && activeTab === 'alokasi') {
+      fetchAlokasi(alokasiYear)
+    }
+  }, [status, activeTab, alokasiYear, fetchAlokasi])
 
   const fetchCash = useCallback(async () => {
     try {
@@ -556,7 +583,7 @@ export default function PortfolioPage() {
         {/* Tabs */}
         <div className="border-b border-gray-200 mb-6">
           <nav className="flex gap-6">
-            {([['portofolio','Portofolio'],['jurnal','Jurnal'],['gainloss','Gain/Loss'],['cash','Cash']] as const).map(([tab, label]) => (
+            {([['portofolio','Portofolio'],['jurnal','Jurnal'],['gainloss','Gain/Loss'],['cash','Cash'],['alokasi','Alokasi']] as const).map(([tab, label]) => (
               <button key={tab} onClick={() => setActiveTab(tab)}
                 className={`pb-3 text-sm font-medium border-b-2 transition-colors ${
                   activeTab === tab ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'
@@ -1065,6 +1092,149 @@ export default function PortfolioPage() {
                       </div>
                     )
                   })()}
+                </>
+              )}
+            </div>
+          )
+        })()}
+
+        {/* ── TAB ALOKASI ─────────────────────────────────────────────────── */}
+        {activeTab === 'alokasi' && (() => {
+          const availYears = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i)
+          const ad = alokasiData
+          const hasData = ad && ad.data.length > 0
+
+          return (
+            <div>
+              {/* Header */}
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
+                <div>
+                  <h2 className="text-lg font-bold text-gray-900">Alokasi Saham</h2>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    {hasData && ad.snapshot_date
+                      ? `Snapshot: Jurnal ${fmtDate(ad.snapshot_date)}`
+                      : 'Berdasarkan jurnal terakhir tahun yang dipilih'}
+                  </p>
+                </div>
+                <select value={alokasiYear} onChange={e => setAlokasiYear(Number(e.target.value))}
+                  className="border border-gray-300 rounded-md px-3 py-1.5 text-sm w-fit">
+                  {availYears.map(y => <option key={y} value={y}>Tahun {y}</option>)}
+                </select>
+              </div>
+
+              {loadingAlokasi ? (
+                <div className="bg-white rounded-lg shadow p-16 text-center text-gray-400">Memuat data alokasi...</div>
+              ) : !hasData ? (
+                <div className="bg-white rounded-lg shadow p-16 text-center text-gray-400">
+                  Tidak ada data jurnal pada tahun {alokasiYear}.<br />
+                  <span className="text-sm">Buat jurnal terlebih dahulu di tab Jurnal.</span>
+                </div>
+              ) : (
+                <>
+                  {/* Chart + Ringkasan */}
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+                    {/* Pie Chart */}
+                    <div className="lg:col-span-2 bg-white rounded-lg shadow p-4">
+                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Distribusi Nilai Pasar</p>
+                      <div style={{ height: 340 }}>
+                        <ResponsiveContainer width="100%" height="100%">
+                          <PieChart>
+                            <Pie
+                              data={ad.data}
+                              dataKey="nilai_pasar"
+                              nameKey="kode_saham"
+                              cx="50%" cy="50%"
+                              outerRadius={130}
+                              label={({ kode_saham, porsi_persen }) =>
+                                porsi_persen >= 3 ? `${kode_saham} ${porsi_persen}%` : ''
+                              }
+                              labelLine={false}
+                            >
+                              {ad.data.map((entry) => (
+                                <Cell key={entry.kode_saham} fill={getChartColor(entry.kode_saham)} />
+                              ))}
+                            </Pie>
+                            <Tooltip
+                              formatter={(value: number, name: string) => [
+                                rp(value),
+                                name,
+                              ]}
+                              contentStyle={{ fontSize: 12 }}
+                            />
+                          </PieChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+
+                    {/* Ringkasan */}
+                    <div className="bg-white rounded-lg shadow p-5 flex flex-col justify-center gap-4">
+                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Ringkasan</p>
+                      <div>
+                        <p className="text-xs text-gray-500">Total Nilai Pasar</p>
+                        <p className="text-lg font-bold text-gray-900">{rp(ad.total_nilai_pasar)}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-gray-500">Jumlah Emiten</p>
+                        <p className="text-xl font-bold text-indigo-600">{ad.jumlah_emiten}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-gray-500">Terbesar</p>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ background: getChartColor(ad.data[0].kode_saham) }} />
+                          <span className="font-bold text-gray-900">{ad.data[0].kode_saham}</span>
+                          <span className="text-green-600 font-semibold">{ad.data[0].porsi_persen}%</span>
+                        </div>
+                      </div>
+                      <div>
+                        <p className="text-xs text-gray-500">Terkecil</p>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ background: getChartColor(ad.data[ad.data.length - 1].kode_saham) }} />
+                          <span className="font-bold text-gray-900">{ad.data[ad.data.length - 1].kode_saham}</span>
+                          <span className="text-gray-500 font-semibold">{ad.data[ad.data.length - 1].porsi_persen}%</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Tabel Legenda */}
+                  <div className="bg-white shadow sm:rounded-lg overflow-hidden">
+                    <div className="px-4 py-3 border-b border-gray-100">
+                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Legenda Alokasi</p>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full text-sm divide-y divide-gray-100">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            {['No','','Kode Saham','Nilai Pasar','Porsi (%)'].map(h => (
+                              <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                          {ad.data.map((item, idx) => (
+                            <tr key={item.kode_saham} className="hover:bg-gray-50">
+                              <td className="px-4 py-3 text-gray-400 text-xs">{idx + 1}</td>
+                              <td className="px-4 py-3">
+                                <span className="inline-block w-3 h-3 rounded-full"
+                                  style={{ background: getChartColor(item.kode_saham) }} />
+                              </td>
+                              <td className="px-4 py-3 font-bold text-indigo-700">{item.kode_saham}</td>
+                              <td className="px-4 py-3 text-gray-900 whitespace-nowrap">{rp(item.nilai_pasar)}</td>
+                              <td className="px-4 py-3 whitespace-nowrap">
+                                <div className="flex items-center gap-2">
+                                  <div className="flex-1 bg-gray-100 rounded-full h-1.5 max-w-24">
+                                    <div className="h-1.5 rounded-full"
+                                      style={{ width: `${Math.min(item.porsi_persen, 100)}%`, background: getChartColor(item.kode_saham) }} />
+                                  </div>
+                                  <span className="font-semibold text-gray-700 text-xs">{item.porsi_persen}%</span>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
                 </>
               )}
             </div>
