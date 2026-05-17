@@ -7,7 +7,7 @@ import { useSession, signOut } from 'next-auth/react'
 
 const navItems = [
   {
-    href: '/',
+    href: '/simulasi',
     label: 'Simulasi',
     pro: false,
     icon: (
