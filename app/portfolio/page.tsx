@@ -86,7 +86,7 @@ export default function PortfolioPage() {
   const router = useRouter()
 
   const [proAccess, setProAccess]       = useState<{ hasAccess: boolean } | null>(null)
-  const [activeTab, setActiveTab]       = useState<'portofolio' | 'jurnal' | 'gainloss' | 'cash' | 'alokasi'>('portofolio')
+  const [activeTab, setActiveTab]       = useState<'portofolio' | 'jurnal' | 'gainloss' | 'cash' | 'alokasi' | 'alokasi-cash'>('portofolio')
   const [glFilterKet, setGlFilterKet]   = useState('')
   const [glJournalYear, setGlJournalYear] = useState(new Date().getFullYear())
 
@@ -98,6 +98,15 @@ export default function PortfolioPage() {
     data: { kode_saham: string; nilai_pasar: number; porsi_persen: number }[]
   } | null>(null)
   const [loadingAlokasi, setLoadingAlokasi] = useState(false)
+
+  // Alokasi Cash states
+  const [alokasiCashYear, setAlokasiCashYear] = useState(new Date().getFullYear())
+  const [alokasiCashData, setAlokasiCashData] = useState<{
+    snapshot_date: string | null; year: number
+    total_cash: number; total_nilai_pasar: number; jumlah_akun: number
+    data: { keterangan: string; saldo: number; porsi_persen: number }[]
+  } | null>(null)
+  const [loadingAlokasiCash, setLoadingAlokasiCash] = useState(false)
   const [rows, setRows]                 = useState<PortfolioRow[]>([])
   const [prices, setPrices]             = useState<Record<string, { price: number | null; isCache: boolean; lastPriceAt: string | null }>>({})
   const [loadingData, setLoadingData]   = useState(false)
@@ -207,6 +216,22 @@ export default function PortfolioPage() {
       fetchAlokasi(alokasiYear)
     }
   }, [status, activeTab, alokasiYear, fetchAlokasi])
+
+  const fetchAlokasiCash = useCallback(async (year: number) => {
+    setLoadingAlokasiCash(true)
+    try {
+      const res = await fetch(`/api/portfolio/alokasi-cash?year=${year}`)
+      if (res.ok) setAlokasiCashData(await res.json())
+    } finally {
+      setLoadingAlokasiCash(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (status === 'authenticated' && activeTab === 'alokasi-cash') {
+      fetchAlokasiCash(alokasiCashYear)
+    }
+  }, [status, activeTab, alokasiCashYear, fetchAlokasiCash])
 
   const fetchCash = useCallback(async () => {
     try {
@@ -583,7 +608,7 @@ export default function PortfolioPage() {
         {/* Tabs */}
         <div className="border-b border-gray-200 mb-6">
           <nav className="flex gap-6">
-            {([['portofolio','Portofolio'],['jurnal','Jurnal'],['gainloss','Gain/Loss'],['cash','Cash'],['alokasi','Alokasi']] as const).map(([tab, label]) => (
+            {([['portofolio','Portofolio'],['jurnal','Jurnal'],['gainloss','Gain/Loss'],['cash','Cash'],['alokasi','Alokasi Saham'],['alokasi-cash','Alokasi Cash']] as const).map(([tab, label]) => (
               <button key={tab} onClick={() => setActiveTab(tab)}
                 className={`pb-3 text-sm font-medium border-b-2 transition-colors ${
                   activeTab === tab ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'
@@ -1235,6 +1260,224 @@ export default function PortfolioPage() {
                       </table>
                     </div>
                   </div>
+                </>
+              )}
+            </div>
+          )
+        })()}
+
+        {/* ── TAB ALOKASI CASH ────────────────────────────────────────────── */}
+        {activeTab === 'alokasi-cash' && (() => {
+          const availYears = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i)
+          const ac = alokasiCashData
+          const hasData = ac && ac.data.length > 0
+
+          return (
+            <div>
+              {/* Header */}
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
+                <div>
+                  <h2 className="text-lg font-bold text-gray-900">Alokasi Cash</h2>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    {hasData && ac.snapshot_date
+                      ? `Snapshot: Jurnal ${fmtDate(ac.snapshot_date)}`
+                      : 'Berdasarkan jurnal terakhir tahun yang dipilih'}
+                  </p>
+                </div>
+                <select value={alokasiCashYear} onChange={e => setAlokasiCashYear(Number(e.target.value))}
+                  className="border border-gray-300 rounded-md px-3 py-1.5 text-sm w-fit">
+                  {availYears.map(y => <option key={y} value={y}>Tahun {y}</option>)}
+                </select>
+              </div>
+
+              {loadingAlokasiCash ? (
+                <div className="bg-white rounded-lg shadow p-16 text-center text-gray-400">Memuat data alokasi cash...</div>
+              ) : !hasData ? (
+                <div className="bg-white rounded-lg shadow p-16 text-center text-gray-400">
+                  Tidak ada data cash pada jurnal tahun {alokasiCashYear}.<br />
+                  <span className="text-sm">Pastikan jurnal memiliki data cash (saldo &gt; 0).</span>
+                </div>
+              ) : (
+                <>
+                  {/* Chart + Ringkasan */}
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+                    {/* Pie Chart */}
+                    <div className="lg:col-span-2 bg-white rounded-lg shadow p-4">
+                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Distribusi Saldo Cash</p>
+                      <div style={{ height: 340 }}>
+                        <ResponsiveContainer width="100%" height="100%">
+                          <PieChart>
+                            <Pie
+                              data={ac.data}
+                              dataKey="saldo"
+                              nameKey="keterangan"
+                              cx="50%" cy="50%"
+                              outerRadius={130}
+                              label={({ keterangan, porsi_persen }) =>
+                                porsi_persen >= 3 ? `${keterangan} ${porsi_persen}%` : ''
+                              }
+                              labelLine={false}
+                            >
+                              {ac.data.map((entry) => (
+                                <Cell key={entry.keterangan} fill={getChartColor(entry.keterangan)} />
+                              ))}
+                            </Pie>
+                            <Tooltip
+                              formatter={(value: number, name: string) => [rp(value), name]}
+                              contentStyle={{ fontSize: 12 }}
+                            />
+                          </PieChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+
+                    {/* Ringkasan */}
+                    <div className="bg-white rounded-lg shadow p-5 flex flex-col justify-center gap-4">
+                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Ringkasan</p>
+                      <div>
+                        <p className="text-xs text-gray-500">Total Cash</p>
+                        <p className="text-lg font-bold text-gray-900">{rp(ac.total_cash)}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-gray-500">Jumlah Akun</p>
+                        <p className="text-xl font-bold text-emerald-600">{ac.jumlah_akun}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-gray-500">Terbesar</p>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <span className="w-3 h-3 rounded-full flex-shrink-0"
+                            style={{ background: getChartColor(ac.data[0].keterangan) }} />
+                          <span className="font-bold text-gray-900 truncate max-w-28">{ac.data[0].keterangan}</span>
+                          <span className="text-green-600 font-semibold flex-shrink-0">{ac.data[0].porsi_persen}%</span>
+                        </div>
+                      </div>
+                      <div>
+                        <p className="text-xs text-gray-500">Terkecil</p>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <span className="w-3 h-3 rounded-full flex-shrink-0"
+                            style={{ background: getChartColor(ac.data[ac.data.length - 1].keterangan) }} />
+                          <span className="font-bold text-gray-900 truncate max-w-28">{ac.data[ac.data.length - 1].keterangan}</span>
+                          <span className="text-gray-500 font-semibold flex-shrink-0">{ac.data[ac.data.length - 1].porsi_persen}%</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Tabel Legenda */}
+                  <div className="bg-white shadow sm:rounded-lg overflow-hidden">
+                    <div className="px-4 py-3 border-b border-gray-100">
+                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Legenda Alokasi Cash</p>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full text-sm divide-y divide-gray-100">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            {['No', '', 'Akun / Keterangan', 'Saldo Cash', 'Porsi (%)'].map(h => (
+                              <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                          {ac.data.map((item, idx) => (
+                            <tr key={item.keterangan} className="hover:bg-gray-50">
+                              <td className="px-4 py-3 text-gray-400 text-xs">{idx + 1}</td>
+                              <td className="px-4 py-3">
+                                <span className="inline-block w-3 h-3 rounded-full"
+                                  style={{ background: getChartColor(item.keterangan) }} />
+                              </td>
+                              <td className="px-4 py-3 font-bold text-emerald-700">{item.keterangan}</td>
+                              <td className="px-4 py-3 text-gray-900 whitespace-nowrap">{rp(item.saldo)}</td>
+                              <td className="px-4 py-3 whitespace-nowrap">
+                                <div className="flex items-center gap-2">
+                                  <div className="flex-1 bg-gray-100 rounded-full h-1.5 max-w-24">
+                                    <div className="h-1.5 rounded-full"
+                                      style={{ width: `${Math.min(item.porsi_persen, 100)}%`, background: getChartColor(item.keterangan) }} />
+                                  </div>
+                                  <span className="font-semibold text-gray-700 text-xs">{item.porsi_persen}%</span>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                        <tfoot className="bg-gray-50 border-t border-gray-200">
+                          <tr>
+                            <td colSpan={3} className="px-4 py-3 text-xs font-semibold text-gray-600">Total</td>
+                            <td className="px-4 py-3 text-sm font-bold text-gray-900 whitespace-nowrap">{rp(ac.total_cash)}</td>
+                            <td className="px-4 py-3 text-xs font-semibold text-gray-600">100%</td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  </div>
+
+                  {/* Pie Chart — Investasi vs Cash */}
+                  {ac.total_nilai_pasar > 0 && (() => {
+                    const totalAset = ac.total_nilai_pasar + ac.total_cash
+                    const ivsPct    = parseFloat(((ac.total_nilai_pasar / totalAset) * 100).toFixed(2))
+                    const cashPct   = parseFloat(((ac.total_cash / totalAset) * 100).toFixed(2))
+                    const ivsColor  = '#6366f1'
+                    const cashColor = '#10b981'
+                    const ivsData   = [
+                      { label: 'Investasi Saham', nilai: ac.total_nilai_pasar, pct: ivsPct,  color: ivsColor },
+                      { label: 'Cash',            nilai: ac.total_cash,        pct: cashPct, color: cashColor },
+                    ]
+
+                    return (
+                      <div className="mt-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        <div className="lg:col-span-2 bg-white rounded-lg shadow p-4">
+                          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">
+                            Total Investasi vs Total Cash
+                          </p>
+                          <div style={{ height: 300 }}>
+                            <ResponsiveContainer width="100%" height="100%">
+                              <PieChart>
+                                <Pie
+                                  data={ivsData}
+                                  dataKey="nilai"
+                                  nameKey="label"
+                                  cx="50%" cy="50%"
+                                  outerRadius={110}
+                                  label={({ label, pct }) => `${label} ${pct}%`}
+                                  labelLine={false}
+                                >
+                                  {ivsData.map(d => (
+                                    <Cell key={d.label} fill={d.color} />
+                                  ))}
+                                </Pie>
+                                <Tooltip
+                                  formatter={(value: number, name: string) => [rp(value), name]}
+                                  contentStyle={{ fontSize: 12 }}
+                                />
+                              </PieChart>
+                            </ResponsiveContainer>
+                          </div>
+                        </div>
+
+                        <div className="bg-white rounded-lg shadow p-5 flex flex-col justify-center gap-5">
+                          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Komposisi Aset</p>
+                          <div>
+                            <p className="text-xs text-gray-500">Total Aset</p>
+                            <p className="text-lg font-bold text-gray-900">{rp(totalAset)}</p>
+                          </div>
+                          {ivsData.map(d => (
+                            <div key={d.label}>
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ background: d.color }} />
+                                <p className="text-xs text-gray-600 font-medium">{d.label}</p>
+                              </div>
+                              <p className="text-base font-bold text-gray-900 ml-5">{rp(d.nilai)}</p>
+                              <div className="flex items-center gap-2 ml-5 mt-1">
+                                <div className="flex-1 bg-gray-100 rounded-full h-1.5">
+                                  <div className="h-1.5 rounded-full" style={{ width: `${d.pct}%`, background: d.color }} />
+                                </div>
+                                <span className="text-xs font-semibold text-gray-600">{d.pct}%</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )
+                  })()}
                 </>
               )}
             </div>
