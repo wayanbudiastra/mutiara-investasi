@@ -660,7 +660,7 @@ function DividendsContent() {
                             </td>
                           ))}
                           <td className="text-right py-2 pl-6 font-bold text-indigo-700">
-                            {rp(totalDone)}
+                            {rp(chartData.reduce((s, row) => s + years.reduce((sy, y) => sy + (row[y] ?? 0), 0), 0))}
                           </td>
                         </tr>
                       </tbody>
