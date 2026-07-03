@@ -63,6 +63,11 @@ export function toIdxDate(d: Date): string {
  * berbeda dengan GetBrokerSummary yang market-wide. Diverifikasi manual 2026-06-21,
  * contoh AADI: Volume=59395900, ForeignSell=57181500, ForeignBuy=43964900.
  * Catatan: ini volume, bukan value — estimasi value harus dihitung manual (volume × close).
+ *
+ * PENTING: ForeignBuy/ForeignSell turut mencakup transaksi non-reguler (negosiasi/block
+ * trade) yang harganya bisa sangat berbeda dari Close — untuk saham dengan nonRegularVolume
+ * besar relatif terhadap volume, estimasi (volume × close) jadi tidak bisa diandalkan.
+ * Contoh nyata GOTO 2026-06-19: nonRegularVolume (1.28 miliar) > volume reguler (1.265 miliar).
  */
 export interface StockSummaryItem {
   date: string // YYYY-MM-DD
@@ -71,8 +76,10 @@ export interface StockSummaryItem {
   close: number
   volume: number
   value: number
+  frequency: number
   foreignBuy: number
   foreignSell: number
+  nonRegularVolume: number
 }
 
 interface RawStockSummaryItem {
@@ -82,8 +89,10 @@ interface RawStockSummaryItem {
   Close: number
   Volume: number
   Value: number
+  Frequency: number
   ForeignBuy: number
   ForeignSell: number
+  NonRegularVolume: number
 }
 
 /** @param date format YYYYMMDD */
@@ -100,8 +109,10 @@ export async function getStockSummary(date: string): Promise<StockSummaryItem[]>
     close: Number(item.Close ?? 0),
     volume: Number(item.Volume ?? 0),
     value: Number(item.Value ?? 0),
+    frequency: Number(item.Frequency ?? 0),
     foreignBuy: Number(item.ForeignBuy ?? 0),
     foreignSell: Number(item.ForeignSell ?? 0),
+    nonRegularVolume: Number(item.NonRegularVolume ?? 0),
   }))
 }
 
