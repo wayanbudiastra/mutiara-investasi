@@ -55,7 +55,8 @@ function DividendsContent() {
   const [dividends, setDividends] = useState<Dividend[]>([])
   const [securities, setSecurities] = useState<Security[]>([])
   const [loading, setLoading] = useState(false)
-  const [activeTab, setActiveTab] = useState<'data' | 'rekap' | 'sekuritas'>('data')
+  const [activeTab, setActiveTab] = useState<'data' | 'rekap' | 'sekuritas' | 'saham'>('data')
+  const [rekapSahamPeriod, setRekapSahamPeriod] = useState<'1' | '3' | '5' | 'all'>('all')
   const [selectedRekapKet, setSelectedRekapKet] = useState('')
   const [showModal, setShowModal] = useState(false)
   const [editItem, setEditItem] = useState<Dividend | null>(null)
@@ -246,6 +247,25 @@ function DividendsContent() {
 
   const currentYear = new Date().getFullYear()
 
+  // Rekap By Saham — semua saham (lintas akun & tahun), diurutkan dari total dividen terbesar
+  const REKAP_SAHAM_PERIOD_YEARS = { '1': 1, '3': 3, '5': 5 } as const
+  const rekapSahamDividends = rekapSahamPeriod === 'all'
+    ? doneDividends
+    : doneDividends.filter(d => d.tahun > currentYear - REKAP_SAHAM_PERIOD_YEARS[rekapSahamPeriod])
+  const rekapSahamData = Object.values(
+    rekapSahamDividends.reduce((acc, d) => {
+      if (!acc[d.saham]) acc[d.saham] = { saham: d.saham, total: 0, count: 0, tahunSet: new Set<number>(), ketSet: new Set<string>() }
+      acc[d.saham].total += Number(d.total)
+      acc[d.saham].count += 1
+      acc[d.saham].tahunSet.add(d.tahun)
+      acc[d.saham].ketSet.add(d.keterangan)
+      return acc
+    }, {} as Record<string, { saham: string; total: number; count: number; tahunSet: Set<number>; ketSet: Set<string> }>)
+  )
+    .map(r => ({ saham: r.saham, total: r.total, count: r.count, tahunCount: r.tahunSet.size, ketCount: r.ketSet.size }))
+    .sort((a, b) => b.total - a.total)
+  const rekapSahamTotal = rekapSahamData.reduce((s, r) => s + r.total, 0)
+
   const totalDone = doneDividends
     .filter(d => d.tahun === currentYear)
     .reduce((s, d) => s + Number(d.total), 0)
@@ -304,6 +324,7 @@ function DividendsContent() {
               ['data', 'Data Dividen'],
               ['rekap', 'Rekap Chart'],
               ['sekuritas', 'Rekap By Sekuritas'],
+              ['saham', 'Rekap By Saham'],
             ] as const).map(([tab, label]) => (
               <button
                 key={tab}
@@ -569,6 +590,137 @@ function DividendsContent() {
                           </td>
                         </tr>
                       </tbody>
+                    </table>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Rekap By Saham Tab */}
+        {activeTab === 'saham' && (
+          <div className="bg-white shadow sm:rounded-lg p-6">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-1">
+              <div className="text-center sm:text-left flex-1">
+                <h2 className="text-sm font-bold text-gray-700 tracking-widest uppercase">
+                  Rekap By Saham
+                </h2>
+              </div>
+              <div className="flex justify-center sm:justify-end gap-1">
+                {([
+                  ['1', '1 Tahun'],
+                  ['3', '3 Tahun'],
+                  ['5', '5 Tahun'],
+                  ['all', 'All Time'],
+                ] as const).map(([key, label]) => (
+                  <button
+                    key={key}
+                    onClick={() => setRekapSahamPeriod(key)}
+                    className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
+                      rekapSahamPeriod === key
+                        ? 'bg-indigo-600 text-white'
+                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <p className="text-center text-xs text-gray-400 mb-6">
+              Semua saham (lintas akun sekuritas & tahun), diurutkan dari total dividen terbesar
+              {rekapSahamPeriod !== 'all' && ` — ${REKAP_SAHAM_PERIOD_YEARS[rekapSahamPeriod]} tahun terakhir (${currentYear - REKAP_SAHAM_PERIOD_YEARS[rekapSahamPeriod] + 1}–${currentYear})`}
+            </p>
+
+            {rekapSahamData.length === 0 ? (
+              <div className="py-16 text-center text-gray-500">
+                Belum ada data dengan status DONE untuk periode ini
+              </div>
+            ) : (
+              <>
+
+                {/* Bar Chart — top 15 saham */}
+                <div style={{ height: 380 }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={rekapSahamData.slice(0, 15)} margin={{ top: 10, right: 20, left: 10, bottom: 30 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                      <XAxis
+                        dataKey="saham"
+                        tick={{ fontSize: 11 }}
+                        label={{ value: 'Kode Saham', position: 'insideBottom', offset: -15, fontSize: 12 }}
+                      />
+                      <YAxis
+                        tickFormatter={v => v === 0 ? 'Rp0' : `Rp${(v / 1_000_000).toFixed(0)}jt`}
+                        tick={{ fontSize: 11 }}
+                        width={65}
+                      />
+                      <Tooltip
+                        formatter={(value: number) => [`Rp ${value.toLocaleString('id-ID')}`, 'Total Dividen']}
+                      />
+                      <Bar dataKey="total" name="Total Dividen" fill="#3B82F6" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+                {rekapSahamData.length > 15 && (
+                  <p className="text-center text-xs text-gray-400 mt-2">
+                    Menampilkan 15 saham teratas di chart — tabel di bawah menampilkan semua {rekapSahamData.length} saham
+                  </p>
+                )}
+
+                {/* Tabel ranking saham */}
+                <div className="mt-8 border-t border-gray-200 pt-6">
+                  <h3 className="text-sm font-bold text-gray-700 mb-4 tracking-wide uppercase">
+                    Ranking Saham Berdasarkan Total Dividen
+                  </h3>
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-gray-200">
+                          <th className="text-left py-2 pr-4 font-medium text-gray-600">#</th>
+                          <th className="text-left py-2 pr-6 font-medium text-gray-600">Kode Saham</th>
+                          <th className="text-right py-2 px-4 font-medium text-gray-600">Total Dividen</th>
+                          <th className="text-right py-2 px-4 font-medium text-gray-600">Jumlah Transaksi</th>
+                          <th className="text-right py-2 px-4 font-medium text-gray-600">Jumlah Tahun</th>
+                          <th className="text-right py-2 pl-6 font-medium text-gray-600 w-40">Porsi</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rekapSahamData.map((row, idx) => {
+                          const porsi = rekapSahamTotal > 0 ? (row.total / rekapSahamTotal) * 100 : 0
+                          return (
+                            <tr key={row.saham} className="border-b border-gray-100 hover:bg-gray-50">
+                              <td className="py-2 pr-4 text-gray-400 text-xs">{idx + 1}</td>
+                              <td className="py-2 pr-6 font-medium text-gray-900">
+                                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-100 text-indigo-800">
+                                  {row.saham}
+                                </span>
+                              </td>
+                              <td className="text-right py-2 px-4 font-bold text-gray-900">{rp(row.total)}</td>
+                              <td className="text-right py-2 px-4 text-gray-700">{row.count}</td>
+                              <td className="text-right py-2 px-4 text-gray-700">{row.tahunCount}</td>
+                              <td className="text-right py-2 pl-6">
+                                <div className="flex items-center gap-2">
+                                  <div className="flex-1 bg-gray-100 rounded-full h-1.5">
+                                    <div className="h-1.5 rounded-full bg-indigo-500" style={{ width: `${Math.min(porsi, 100)}%` }} />
+                                  </div>
+                                  <span className="font-semibold text-gray-700 text-xs w-12 text-right">{porsi.toFixed(1)}%</span>
+                                </div>
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                      <tfoot>
+                        <tr className="bg-gray-50 border-t-2 border-gray-300">
+                          <td colSpan={2} className="py-2 pr-6 font-bold text-gray-900">Grand Total</td>
+                          <td className="text-right py-2 px-4 font-bold text-indigo-700">{rp(rekapSahamTotal)}</td>
+                          <td className="text-right py-2 px-4 font-bold text-gray-900">
+                            {rekapSahamData.reduce((s, r) => s + r.count, 0)}
+                          </td>
+                          <td colSpan={2}></td>
+                        </tr>
+                      </tfoot>
                     </table>
                   </div>
                 </div>

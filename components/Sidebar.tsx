@@ -62,6 +62,28 @@ const navItems = [
     ),
   },
   {
+    href: '/avg-down',
+    label: 'Strategi Avg Down',
+    pro: true,
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+          d="M13 17h8m0 0v-8m0 8L13 9l-4 4-6-6" />
+      </svg>
+    ),
+  },
+  {
+    href: '/data-index',
+    label: 'Data Index',
+    pro: true,
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+          d="M11 3a8 8 0 100 16 8 8 0 000-16zm0 0v16m-8-8h16" />
+      </svg>
+    ),
+  },
+  {
     href: '/securities',
     label: 'Daftar Sekuritas',
     pro: true,

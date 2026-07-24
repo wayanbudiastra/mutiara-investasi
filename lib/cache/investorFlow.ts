@@ -54,3 +54,16 @@ export function getCachedInvestorFlow(date: string) {
     { tags: [`investor-flow:${date}`], revalidate: false },
   )()
 }
+
+/**
+ * investor_flows disinkron per bulan, sedangkan tanggal yang dipilih user berasal dari
+ * broker_summaries/stock_summaries (harian) — bisa lebih baru daripada bulan terakhir yang
+ * tersedia di investor_flows (mis. bulan berjalan belum dipublikasikan IDX, lihat
+ * prd/testing_koneksi_idx_report.md §3.1). Gunakan ini untuk tahu tanggal fallback yang valid.
+ */
+export async function getLatestInvestorFlowDate(): Promise<string | null> {
+  const rows = await prisma.$queryRawUnsafe<{ date: string | null }[]>(
+    `SELECT MAX("date") AS date FROM "investor_flows"`,
+  )
+  return rows[0]?.date ?? null
+}
