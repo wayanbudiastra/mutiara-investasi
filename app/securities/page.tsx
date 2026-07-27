@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { ProGate } from '@/components/ProGate'
 
 type Security = {
@@ -252,6 +253,12 @@ export default function SecuritiesPage() {
                         </td>
                         <td className="px-4 py-3 text-center">
                           <div className="flex items-center justify-center gap-3">
+                            <Link
+                              href={`/securities/history?nama=${encodeURIComponent(sec.nama)}&kode=${encodeURIComponent(sec.kode)}`}
+                              className="text-xs text-emerald-600 hover:text-emerald-800 font-medium"
+                            >
+                              History
+                            </Link>
                             <button
                               onClick={() => openEdit(sec)}
                               className="text-xs text-indigo-600 hover:text-indigo-800 font-medium"
