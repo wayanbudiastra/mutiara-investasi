@@ -44,6 +44,13 @@ interface PortfolioRow {
   lot: number
 }
 
+interface EstimateOverride {
+  id: string
+  saham: string
+  dividenPerLembar: number
+  catatan: string | null
+}
+
 const emptyForm = {
   bulan: 'Januari',
   tahun: new Date().getFullYear(),
@@ -68,6 +75,11 @@ function DividendsContent() {
   const [portfolioRows, setPortfolioRows] = useState<PortfolioRow[]>([])
   const [rekapSahamPeriod, setRekapSahamPeriod] = useState<'1' | '3' | '5' | 'all'>('all')
   const [estimasiBannerCollapsed, setEstimasiBannerCollapsed] = useState(false)
+  const [estimateOverrides, setEstimateOverrides] = useState<EstimateOverride[]>([])
+  const [editingOverrideSaham, setEditingOverrideSaham] = useState<string | null>(null)
+  const [overrideInputValue, setOverrideInputValue] = useState('')
+  const [savingOverride, setSavingOverride] = useState(false)
+  const [showValidasiModal, setShowValidasiModal] = useState(false)
   const [selectedRekapKet, setSelectedRekapKet] = useState('')
   const [showModal, setShowModal] = useState(false)
   const [editItem, setEditItem] = useState<Dividend | null>(null)
@@ -92,7 +104,7 @@ function DividendsContent() {
   const fetchDividends = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await fetch('/api/dividends')
+      const res = await fetch('/api/dividends', { cache: 'no-store' })
       if (res.ok) setDividends(await res.json())
     } finally {
       setLoading(false)
@@ -101,12 +113,61 @@ function DividendsContent() {
 
   const fetchPortfolio = useCallback(async () => {
     try {
-      const res = await fetch('/api/portfolio')
+      const res = await fetch('/api/portfolio', { cache: 'no-store' })
       if (res.ok) setPortfolioRows(await res.json())
     } catch {
       // silently fail — tab Estimasi Dividen akan tampil kosong
     }
   }, [])
+
+  const fetchEstimateOverrides = useCallback(async () => {
+    try {
+      const res = await fetch('/api/dividends/estimate-overrides', { cache: 'no-store' })
+      if (res.ok) setEstimateOverrides(await res.json())
+    } catch {
+      // silently fail — tab Estimasi Dividen tetap tampilkan nilai otomatis
+    }
+  }, [])
+
+  const openOverrideEditor = useCallback((saham: string, currentValue: number | null) => {
+    setEditingOverrideSaham(saham)
+    setOverrideInputValue(currentValue !== null ? String(currentValue) : '')
+  }, [])
+
+  const cancelOverrideEditor = useCallback(() => {
+    setEditingOverrideSaham(null)
+    setOverrideInputValue('')
+  }, [])
+
+  const saveOverride = useCallback(async (saham: string) => {
+    const value = Number(overrideInputValue)
+    if (!overrideInputValue || !Number.isFinite(value) || value < 0) return
+    setSavingOverride(true)
+    try {
+      const res = await fetch('/api/dividends/estimate-overrides', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ saham, dividenPerLembar: value }),
+      })
+      if (res.ok) {
+        await fetchEstimateOverrides()
+        setEditingOverrideSaham(null)
+        setOverrideInputValue('')
+      }
+    } finally {
+      setSavingOverride(false)
+    }
+  }, [overrideInputValue, fetchEstimateOverrides])
+
+  const resetOverride = useCallback(async (saham: string) => {
+    setSavingOverride(true)
+    try {
+      const res = await fetch(`/api/dividends/estimate-overrides?saham=${encodeURIComponent(saham)}`, { method: 'DELETE' })
+      if (res.ok) await fetchEstimateOverrides()
+    } finally {
+      setSavingOverride(false)
+    }
+  }, [fetchEstimateOverrides])
 
   const handleRefreshCache = useCallback(async () => {
     setRefreshingCache(true)
@@ -141,10 +202,11 @@ function DividendsContent() {
       fetch('/api/subscription/status').then(r => r.json()).then(setProAccess)
       fetchDividends()
       fetchPortfolio()
+      fetchEstimateOverrides()
       const userId = (session?.user as any)?.id
       if (userId) fetchSecurities(userId)
     }
-  }, [status, session, fetchDividends, fetchPortfolio, fetchSecurities])
+  }, [status, session, fetchDividends, fetchPortfolio, fetchEstimateOverrides, fetchSecurities])
 
   const openAdd = () => {
     setEditItem(null)
@@ -311,32 +373,66 @@ function DividendsContent() {
     return acc
   }, {} as Record<string, Record<number, number>>)
 
+  const overrideMap = estimateOverrides.reduce((acc, o) => {
+    acc[o.saham] = o
+    return acc
+  }, {} as Record<string, EstimateOverride>)
+
+  // Setiap saham yang lot-nya > 0 di Portofolio SELALU muncul di tabel Estimasi Dividen — baik
+  // yang punya riwayat DONE (dihitung otomatis) maupun yang belum (menunggu diisi manual). Kalau
+  // user sudah menyimpan override manual untuk saham itu, nilai manual SELALU menang atas hasil
+  // otomatis — inilah mekanisme "koreksi data" yang diminta karena riwayat DONE bisa saja salah/tidak lengkap.
   const estimasiDividenData = Object.entries(portfolioLotMap)
     .filter(([, lot]) => lot > 0)
     .map(([saham, lot]) => {
       const yearsMap = dividendByStockYear[saham]
-      if (!yearsMap) return null
-      const yearsAvailable = Object.keys(yearsMap).map(Number).sort((a, b) => b - a)
-      const lastFullYear = yearsAvailable.find(y => y === currentYear - 1)
-      const yearUsed = lastFullYear ?? yearsAvailable[0]
-      const dividenPerLembar = yearsMap[yearUsed]
+      const override = overrideMap[saham]
+      const hasAutoHistory = !!yearsMap
+
+      let yearUsed: number | null = null
+      let isFallbackYear = false
+      let autoDividenPerLembar: number | null = null
+      let anomali: { avgTahunLain: number; deviasiPct: number } | null = null
+
+      if (yearsMap) {
+        const yearsAvailable = Object.keys(yearsMap).map(Number).sort((a, b) => b - a)
+        const lastFullYear = yearsAvailable.find(y => y === currentYear - 1)
+        yearUsed = lastFullYear ?? yearsAvailable[0]
+        isFallbackYear = yearUsed !== currentYear - 1
+        autoDividenPerLembar = yearsMap[yearUsed]
+
+        // Deteksi anomali: bandingkan dividen/lembar tahun acuan vs rata-rata tahun lain yang tersedia
+        const otherYears = yearsAvailable.filter(y => y !== yearUsed)
+        if (otherYears.length > 0) {
+          const avgTahunLain = otherYears.reduce((s, y) => s + yearsMap[y], 0) / otherYears.length
+          const deviasiPct = avgTahunLain > 0 ? ((autoDividenPerLembar - avgTahunLain) / avgTahunLain) * 100 : 0
+          if (Math.abs(deviasiPct) > 50) anomali = { avgTahunLain, deviasiPct }
+        }
+      }
+
+      const isManualOverride = !!override
+      const dividenPerLembar = isManualOverride ? override.dividenPerLembar : autoDividenPerLembar
+      const needsInput = dividenPerLembar === null
+
       return {
         saham,
         lot,
         yearUsed,
-        isFallbackYear: yearUsed !== currentYear - 1,
+        isFallbackYear,
         dividenPerLembar,
-        estimasi: dividenPerLembar * lot * 100,
+        autoDividenPerLembar,
+        hasAutoHistory,
+        isManualOverride,
+        needsInput,
+        anomali: isManualOverride ? null : anomali,
+        estimasi: dividenPerLembar !== null ? dividenPerLembar * lot * 100 : 0,
       }
     })
-    .filter((r): r is NonNullable<typeof r> => r !== null)
     .sort((a, b) => b.estimasi - a.estimasi)
 
   const totalEstimasiDividenTahunDepan = estimasiDividenData.reduce((s, r) => s + r.estimasi, 0)
-  const sahamTanpaRiwayat = Object.entries(portfolioLotMap)
-    .filter(([saham, lot]) => lot > 0 && !dividendByStockYear[saham])
-    .map(([saham]) => saham)
-    .sort()
+  const sahamTanpaRiwayat = estimasiDividenData.filter(r => r.needsInput).map(r => r.saham)
+  const sahamAnomali = estimasiDividenData.filter(r => r.anomali)
 
   const totalDone = doneDividends
     .filter(d => d.tahun === currentYear)
@@ -935,7 +1031,9 @@ function DividendsContent() {
                   jumlah lot yang kamu pegang <strong>sekarang</strong> — bukan jumlah lot saat dividen itu diterima dulu.
                   <strong> Ini hanya estimasi, bukan angka pasti</strong> — dividen aktual tahun {nextYear} tergantung kebijakan emiten
                   dan tidak dijamin sama atau berulang seperti tahun sebelumnya. Kalau kamu menambah/mengurangi posisi, estimasi ini
-                  akan berubah mengikuti data Portofolio terbaru.
+                  akan berubah mengikuti data Portofolio terbaru. Kalau riwayat dividennya kamu rasa kurang akurat atau belum ada,
+                  klik ikon pensil di kolom Dividen/Lembar untuk mengoreksinya secara manual — atau pakai tombol <strong>Validasi Data</strong>{' '}
+                  untuk melihat saham mana saja yang perlu diperiksa.
                 </p>
               )}
             </div>
@@ -950,50 +1048,143 @@ function DividendsContent() {
               </div>
             ) : (
               <>
-                {/* Ringkasan */}
-                <div className="bg-white rounded-lg shadow p-5 mb-6">
-                  <p className="text-xs text-gray-500 mb-1">Estimasi Total Dividen Tahun {nextYear}</p>
-                  <p className="text-2xl font-bold text-green-600">{rp(totalEstimasiDividenTahunDepan)}</p>
-                  <p className="text-xs text-gray-400 mt-1">
-                    Berdasarkan {estimasiDividenData.length} saham yang dimiliki saat ini dengan riwayat dividen tersedia
-                  </p>
+                {/* Ringkasan + tombol validasi */}
+                <div className="bg-white rounded-lg shadow p-5 mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                  <div>
+                    <p className="text-xs text-gray-500 mb-1">Estimasi Total Dividen Tahun {nextYear}</p>
+                    <p className="text-2xl font-bold text-green-600">{rp(totalEstimasiDividenTahunDepan)}</p>
+                    <p className="text-xs text-gray-400 mt-1">
+                      Berdasarkan {estimasiDividenData.length} saham yang dimiliki saat ini
+                      {estimateOverrides.length > 0 && ` — ${estimateOverrides.length} di antaranya nilainya dikoreksi manual`}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setShowValidasiModal(true)}
+                    className="inline-flex items-center gap-2 px-4 py-2 border border-gray-300 text-gray-700 text-sm font-medium rounded-md hover:bg-gray-50 flex-shrink-0"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    Validasi Data
+                    {(sahamTanpaRiwayat.length + sahamAnomali.length) > 0 && (
+                      <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-amber-500 text-white text-xs font-bold">
+                        {sahamTanpaRiwayat.length + sahamAnomali.length}
+                      </span>
+                    )}
+                  </button>
                 </div>
 
                 {/* Tabel per saham */}
                 <div className="bg-white shadow sm:rounded-lg overflow-hidden">
-                  <div className="px-4 py-3 border-b border-gray-100">
+                  <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
                     <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Estimasi Per Saham</p>
+                    <p className="text-xs text-gray-400">Klik ikon pensil untuk mengoreksi angka secara manual</p>
                   </div>
                   <div className="overflow-x-auto">
                     <table className="min-w-full text-sm divide-y divide-gray-100">
                       <thead className="bg-gray-50">
                         <tr>
-                          {['Saham', 'Lot Dimiliki Saat Ini', 'Dividen/Lembar', 'Tahun Acuan', `Estimasi ${nextYear}`].map(h => (
+                          {['Saham', 'Lot Dimiliki Saat Ini', 'Dividen/Lembar', 'Tahun Acuan', `Estimasi ${nextYear}`, ''].map(h => (
                             <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
                           ))}
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100">
-                        {estimasiDividenData.map(r => (
-                          <tr key={r.saham} className="hover:bg-gray-50">
-                            <td className="px-4 py-3 whitespace-nowrap">
-                              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-100 text-indigo-800">
-                                {r.saham}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{r.lot}</td>
-                            <td className="px-4 py-3 text-gray-900 whitespace-nowrap">{rp(r.dividenPerLembar)}</td>
-                            <td className="px-4 py-3 text-gray-500 whitespace-nowrap">
-                              {r.yearUsed}{r.isFallbackYear && <span className="text-amber-600 ml-1" title="Tahun penuh terakhir belum ada data — pakai tahun terakhir yang tersedia">*</span>}
-                            </td>
-                            <td className="px-4 py-3 font-bold text-green-600 whitespace-nowrap">{rp(r.estimasi)}</td>
-                          </tr>
-                        ))}
+                        {estimasiDividenData.map(r => {
+                          const isEditing = editingOverrideSaham === r.saham
+                          return (
+                            <tr key={r.saham} className={`hover:bg-gray-50 ${r.needsInput ? 'bg-amber-50/40' : ''}`}>
+                              <td className="px-4 py-3 whitespace-nowrap">
+                                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-100 text-indigo-800">
+                                  {r.saham}
+                                </span>
+                              </td>
+                              <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{r.lot}</td>
+                              <td className="px-4 py-3 text-gray-900 whitespace-nowrap">
+                                {isEditing ? (
+                                  <div className="flex items-center gap-1">
+                                    <input
+                                      type="number"
+                                      autoFocus
+                                      min={0}
+                                      value={overrideInputValue}
+                                      onChange={e => setOverrideInputValue(e.target.value)}
+                                      onKeyDown={e => { if (e.key === 'Enter') saveOverride(r.saham); if (e.key === 'Escape') cancelOverrideEditor() }}
+                                      className="w-28 border border-indigo-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                    />
+                                    <button
+                                      onClick={() => saveOverride(r.saham)}
+                                      disabled={savingOverride}
+                                      title="Simpan"
+                                      className="text-green-600 hover:text-green-800 disabled:opacity-50"
+                                    >
+                                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                                    </button>
+                                    <button onClick={cancelOverrideEditor} title="Batal" className="text-gray-400 hover:text-gray-600">
+                                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center gap-1.5">
+                                    {r.needsInput ? (
+                                      <span className="text-amber-600 text-xs italic">Belum ada data</span>
+                                    ) : (
+                                      <span>{rp(r.dividenPerLembar as number)}</span>
+                                    )}
+                                    {r.isManualOverride && (
+                                      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-700" title="Nilai dikoreksi manual oleh kamu">
+                                        Manual
+                                      </span>
+                                    )}
+                                    {r.anomali && (
+                                      <span
+                                        className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-700"
+                                        title={`Berbeda ${r.anomali.deviasiPct > 0 ? '+' : ''}${r.anomali.deviasiPct.toFixed(0)}% dari rata-rata tahun lain (${rp(r.anomali.avgTahunLain)}) — periksa kembali`}
+                                      >
+                                        ⚠ Cek data
+                                      </span>
+                                    )}
+                                    <button
+                                      onClick={() => openOverrideEditor(r.saham, r.dividenPerLembar)}
+                                      title="Koreksi manual"
+                                      className="text-gray-400 hover:text-indigo-600"
+                                    >
+                                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                      </svg>
+                                    </button>
+                                    {r.isManualOverride && (
+                                      <button
+                                        onClick={() => resetOverride(r.saham)}
+                                        disabled={savingOverride}
+                                        title="Kembalikan ke nilai otomatis dari riwayat dividen"
+                                        className="text-gray-400 hover:text-red-600 disabled:opacity-50"
+                                      >
+                                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                        </svg>
+                                      </button>
+                                    )}
+                                  </div>
+                                )}
+                              </td>
+                              <td className="px-4 py-3 text-gray-500 whitespace-nowrap">
+                                {r.isManualOverride ? (
+                                  <span className="text-purple-600">Manual</span>
+                                ) : r.yearUsed ? (
+                                  <>{r.yearUsed}{r.isFallbackYear && <span className="text-amber-600 ml-1" title="Tahun penuh terakhir belum ada data — pakai tahun terakhir yang tersedia">*</span>}</>
+                                ) : '-'}
+                              </td>
+                              <td className="px-4 py-3 font-bold text-green-600 whitespace-nowrap">{rp(r.estimasi)}</td>
+                              <td></td>
+                            </tr>
+                          )
+                        })}
                       </tbody>
                       <tfoot>
                         <tr className="bg-gray-50 border-t-2 border-gray-300">
                           <td colSpan={4} className="px-4 py-3 font-bold text-gray-900">Total Estimasi {nextYear}</td>
-                          <td className="px-4 py-3 font-bold text-green-700">{rp(totalEstimasiDividenTahunDepan)}</td>
+                          <td colSpan={2} className="px-4 py-3 font-bold text-green-700">{rp(totalEstimasiDividenTahunDepan)}</td>
                         </tr>
                       </tfoot>
                     </table>
@@ -1004,17 +1195,107 @@ function DividendsContent() {
                     </p>
                   )}
                 </div>
-
-                {sahamTanpaRiwayat.length > 0 && (
-                  <p className="text-xs text-gray-400 mt-4">
-                    Saham dimiliki tanpa riwayat dividen DONE (tidak dihitung di estimasi): {sahamTanpaRiwayat.join(', ')}.
-                  </p>
-                )}
               </>
             )}
           </div>
         )}
       </div>
+
+      {/* Validasi Data Modal — tab Estimasi Dividen */}
+      {showValidasiModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="fixed inset-0 bg-black/40" onClick={() => setShowValidasiModal(false)} />
+          <div className="relative z-50 bg-white rounded-xl shadow-2xl w-full max-w-lg mx-4 p-6 max-h-[85vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-bold text-gray-900">Validasi Data Estimasi Dividen</h2>
+              <button onClick={() => setShowValidasiModal(false)} className="text-gray-400 hover:text-gray-600">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {sahamTanpaRiwayat.length === 0 && sahamAnomali.length === 0 && estimasiDividenData.every(r => !r.isFallbackYear) ? (
+              <div className="text-center py-8">
+                <span className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-green-100 text-green-600 mb-3">
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                </span>
+                <p className="text-sm text-gray-600">Semua data terlihat wajar — tidak ada saham tanpa riwayat, tahun pengganti, atau lonjakan tidak biasa.</p>
+              </div>
+            ) : (
+              <div className="space-y-5">
+                {/* Ringkasan angka */}
+                <div className="grid grid-cols-3 gap-3 text-center">
+                  <div className="bg-gray-50 rounded-lg p-3">
+                    <p className="text-lg font-bold text-gray-900">{estimasiDividenData.length}</p>
+                    <p className="text-[11px] text-gray-500">Saham dimiliki</p>
+                  </div>
+                  <div className="bg-gray-50 rounded-lg p-3">
+                    <p className="text-lg font-bold text-purple-600">{estimateOverrides.length}</p>
+                    <p className="text-[11px] text-gray-500">Dikoreksi manual</p>
+                  </div>
+                  <div className="bg-gray-50 rounded-lg p-3">
+                    <p className="text-lg font-bold text-amber-600">{sahamTanpaRiwayat.length}</p>
+                    <p className="text-[11px] text-gray-500">Belum ada data</p>
+                  </div>
+                </div>
+
+                {sahamTanpaRiwayat.length > 0 && (
+                  <div>
+                    <p className="text-sm font-semibold text-amber-700 mb-1.5">⚠ Belum ada riwayat dividen (tidak masuk total, kecuali diisi manual)</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {sahamTanpaRiwayat.map(saham => (
+                        <button
+                          key={saham}
+                          onClick={() => { setShowValidasiModal(false); openOverrideEditor(saham, null) }}
+                          className="px-2 py-1 rounded text-xs font-medium bg-amber-100 text-amber-800 hover:bg-amber-200"
+                          title="Klik untuk isi estimasi manual"
+                        >
+                          {saham} +
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {sahamAnomali.length > 0 && (
+                  <div>
+                    <p className="text-sm font-semibold text-red-700 mb-1.5">⚠ Lonjakan/penurunan tidak biasa dibanding tahun lain</p>
+                    <ul className="space-y-1.5">
+                      {sahamAnomali.map(r => (
+                        <li key={r.saham} className="text-xs text-gray-600 bg-red-50 rounded px-3 py-2">
+                          <span className="font-bold text-gray-900">{r.saham}</span>: dividen/lembar tahun {r.yearUsed} ({rp(r.autoDividenPerLembar ?? 0)})
+                          {' '}berbeda <span className="font-semibold text-red-600">{(r.anomali!.deviasiPct > 0 ? '+' : '')}{r.anomali!.deviasiPct.toFixed(0)}%</span> dari
+                          {' '}rata-rata tahun lain ({rp(r.anomali!.avgTahunLain)}). Periksa apakah datanya benar, atau koreksi manual bila perlu.
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {estimasiDividenData.some(r => r.isFallbackYear && !r.isManualOverride) && (
+                  <div>
+                    <p className="text-sm font-semibold text-gray-700 mb-1.5">ℹ Pakai tahun pengganti (bukan tahun penuh terakhir)</p>
+                    <p className="text-xs text-gray-500">
+                      {estimasiDividenData.filter(r => r.isFallbackYear && !r.isManualOverride).map(r => `${r.saham} (${r.yearUsed})`).join(', ')}
+                      {' '}— tidak ada data DONE tahun {currentYear - 1}, jadi dipakai tahun terakhir yang tersedia. Pastikan ini representatif.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="mt-6 flex justify-end">
+              <button
+                onClick={() => setShowValidasiModal(false)}
+                className="px-4 py-2 bg-gray-100 text-gray-700 text-sm font-medium rounded-md hover:bg-gray-200"
+              >
+                Tutup
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Add/Edit Modal */}
       {showModal && (
