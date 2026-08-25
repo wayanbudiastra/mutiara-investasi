@@ -36,7 +36,10 @@ export async function GET(_request: NextRequest) {
 
     // Gunakan cache — query DB hanya saat cache MISS atau setelah mutasi
     const rows = await getCachedDividens(userId)
-    return NextResponse.json(rows)
+    // no-store: cache server-side sudah ditangani unstable_cache di atas — response ke
+    // browser TIDAK boleh ikut di-cache, kalau tidak tombol "Muat Ulang Data" tidak akan
+    // pernah terlihat mengambil data baru walau server sudah revalidate.
+    return NextResponse.json(rows, { headers: { 'Cache-Control': 'no-store, max-age=0' } })
   } catch (error) {
     console.error('GET dividends error:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

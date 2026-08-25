@@ -92,7 +92,7 @@ function DividendsContent() {
   const fetchDividends = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await fetch('/api/dividends')
+      const res = await fetch('/api/dividends', { cache: 'no-store' })
       if (res.ok) setDividends(await res.json())
     } finally {
       setLoading(false)
@@ -101,7 +101,7 @@ function DividendsContent() {
 
   const fetchPortfolio = useCallback(async () => {
     try {
-      const res = await fetch('/api/portfolio')
+      const res = await fetch('/api/portfolio', { cache: 'no-store' })
       if (res.ok) setPortfolioRows(await res.json())
     } catch {
       // silently fail — tab Estimasi Dividen akan tampil kosong
