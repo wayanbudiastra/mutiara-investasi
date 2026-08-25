@@ -76,9 +76,12 @@ function DividendsContent() {
   const [rekapSahamPeriod, setRekapSahamPeriod] = useState<'1' | '3' | '5' | 'all'>('all')
   const [estimasiBannerCollapsed, setEstimasiBannerCollapsed] = useState(false)
   const [estimateOverrides, setEstimateOverrides] = useState<EstimateOverride[]>([])
-  const [editingOverrideSaham, setEditingOverrideSaham] = useState<string | null>(null)
+  const [showOverrideModal, setShowOverrideModal] = useState(false)
+  const [overrideModalSaham, setOverrideModalSaham] = useState('')
+  const [overrideModalLockSaham, setOverrideModalLockSaham] = useState(false)
   const [overrideInputValue, setOverrideInputValue] = useState('')
   const [savingOverride, setSavingOverride] = useState(false)
+  const [deletingOverrideSaham, setDeletingOverrideSaham] = useState<string | null>(null)
   const [showValidasiModal, setShowValidasiModal] = useState(false)
   const [selectedRekapKet, setSelectedRekapKet] = useState('')
   const [showModal, setShowModal] = useState(false)
@@ -129,43 +132,57 @@ function DividendsContent() {
     }
   }, [])
 
-  const openOverrideEditor = useCallback((saham: string, currentValue: number | null) => {
-    setEditingOverrideSaham(saham)
-    setOverrideInputValue(currentValue !== null ? String(currentValue) : '')
+  // "Tambah" — pilih saham dari Portofolio yang belum dikoreksi manual
+  const openAddOverride = useCallback(() => {
+    setOverrideModalSaham('')
+    setOverrideModalLockSaham(false)
+    setOverrideInputValue('')
+    setShowOverrideModal(true)
   }, [])
 
-  const cancelOverrideEditor = useCallback(() => {
-    setEditingOverrideSaham(null)
+  // "edit" per baris — saham sudah ditentukan, tidak bisa diganti
+  const openEditOverride = useCallback((saham: string, currentValue: number | null) => {
+    setOverrideModalSaham(saham)
+    setOverrideModalLockSaham(true)
+    setOverrideInputValue(currentValue !== null ? String(currentValue) : '')
+    setShowOverrideModal(true)
+  }, [])
+
+  const closeOverrideModal = useCallback(() => {
+    setShowOverrideModal(false)
+    setOverrideModalSaham('')
+    setOverrideModalLockSaham(false)
     setOverrideInputValue('')
   }, [])
 
-  const saveOverride = useCallback(async (saham: string) => {
+  const saveOverride = useCallback(async () => {
     const value = Number(overrideInputValue)
-    if (!overrideInputValue || !Number.isFinite(value) || value < 0) return
+    if (!overrideModalSaham || !overrideInputValue || !Number.isFinite(value) || value < 0) return
     setSavingOverride(true)
     try {
       const res = await fetch('/api/dividends/estimate-overrides', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ saham, dividenPerLembar: value }),
+        body: JSON.stringify({ saham: overrideModalSaham, dividenPerLembar: value }),
       })
       if (res.ok) {
         await fetchEstimateOverrides()
-        setEditingOverrideSaham(null)
-        setOverrideInputValue('')
+        closeOverrideModal()
       }
     } finally {
       setSavingOverride(false)
     }
-  }, [overrideInputValue, fetchEstimateOverrides])
+  }, [overrideModalSaham, overrideInputValue, fetchEstimateOverrides, closeOverrideModal])
 
+  // "Hapus" per baris — hanya untuk saham yang punya koreksi manual, kembali ke nilai otomatis
   const resetOverride = useCallback(async (saham: string) => {
-    setSavingOverride(true)
+    if (!confirm(`Hapus koreksi manual untuk ${saham}? Estimasi akan kembali memakai riwayat dividen otomatis.`)) return
+    setDeletingOverrideSaham(saham)
     try {
       const res = await fetch(`/api/dividends/estimate-overrides?saham=${encodeURIComponent(saham)}`, { method: 'DELETE' })
       if (res.ok) await fetchEstimateOverrides()
     } finally {
-      setSavingOverride(false)
+      setDeletingOverrideSaham(null)
     }
   }, [fetchEstimateOverrides])
 
@@ -1032,8 +1049,8 @@ function DividendsContent() {
                   <strong> Ini hanya estimasi, bukan angka pasti</strong> — dividen aktual tahun {nextYear} tergantung kebijakan emiten
                   dan tidak dijamin sama atau berulang seperti tahun sebelumnya. Kalau kamu menambah/mengurangi posisi, estimasi ini
                   akan berubah mengikuti data Portofolio terbaru. Kalau riwayat dividennya kamu rasa kurang akurat atau belum ada,
-                  klik ikon pensil di kolom Dividen/Lembar untuk mengoreksinya secara manual — atau pakai tombol <strong>Validasi Data</strong>{' '}
-                  untuk melihat saham mana saja yang perlu diperiksa.
+                  pakai tombol <strong>Tambah</strong> atau tautan <strong>edit</strong> di setiap baris untuk mengoreksinya secara manual —
+                  atau pakai tombol <strong>Validasi Data</strong> untuk melihat saham mana saja yang perlu diperiksa.
                 </p>
               )}
             </div>
@@ -1078,108 +1095,85 @@ function DividendsContent() {
                 <div className="bg-white shadow sm:rounded-lg overflow-hidden">
                   <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
                     <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Estimasi Per Saham</p>
-                    <p className="text-xs text-gray-400">Klik ikon pensil untuk mengoreksi angka secara manual</p>
+                    <button
+                      onClick={openAddOverride}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white text-xs font-medium rounded-md hover:bg-indigo-700"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                      </svg>
+                      Tambah
+                    </button>
                   </div>
                   <div className="overflow-x-auto">
                     <table className="min-w-full text-sm divide-y divide-gray-100">
                       <thead className="bg-gray-50">
                         <tr>
-                          {['Saham', 'Lot Dimiliki Saat Ini', 'Dividen/Lembar', 'Tahun Acuan', `Estimasi ${nextYear}`, ''].map(h => (
+                          {['Saham', 'Lot Dimiliki Saat Ini', 'Dividen/Lembar', 'Tahun Acuan', `Estimasi ${nextYear}`, 'Aksi'].map(h => (
                             <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
                           ))}
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100">
-                        {estimasiDividenData.map(r => {
-                          const isEditing = editingOverrideSaham === r.saham
-                          return (
-                            <tr key={r.saham} className={`hover:bg-gray-50 ${r.needsInput ? 'bg-amber-50/40' : ''}`}>
-                              <td className="px-4 py-3 whitespace-nowrap">
-                                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-100 text-indigo-800">
-                                  {r.saham}
-                                </span>
-                              </td>
-                              <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{r.lot}</td>
-                              <td className="px-4 py-3 text-gray-900 whitespace-nowrap">
-                                {isEditing ? (
-                                  <div className="flex items-center gap-1">
-                                    <input
-                                      type="number"
-                                      autoFocus
-                                      min={0}
-                                      value={overrideInputValue}
-                                      onChange={e => setOverrideInputValue(e.target.value)}
-                                      onKeyDown={e => { if (e.key === 'Enter') saveOverride(r.saham); if (e.key === 'Escape') cancelOverrideEditor() }}
-                                      className="w-28 border border-indigo-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                                    />
-                                    <button
-                                      onClick={() => saveOverride(r.saham)}
-                                      disabled={savingOverride}
-                                      title="Simpan"
-                                      className="text-green-600 hover:text-green-800 disabled:opacity-50"
-                                    >
-                                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-                                    </button>
-                                    <button onClick={cancelOverrideEditor} title="Batal" className="text-gray-400 hover:text-gray-600">
-                                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-                                    </button>
-                                  </div>
+                        {estimasiDividenData.map(r => (
+                          <tr key={r.saham} className={`hover:bg-gray-50 ${r.needsInput ? 'bg-amber-50/40' : ''}`}>
+                            <td className="px-4 py-3 whitespace-nowrap">
+                              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-100 text-indigo-800">
+                                {r.saham}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{r.lot}</td>
+                            <td className="px-4 py-3 text-gray-900 whitespace-nowrap">
+                              <div className="flex items-center gap-1.5">
+                                {r.needsInput ? (
+                                  <span className="text-amber-600 text-xs italic">Belum ada data</span>
                                 ) : (
-                                  <div className="flex items-center gap-1.5">
-                                    {r.needsInput ? (
-                                      <span className="text-amber-600 text-xs italic">Belum ada data</span>
-                                    ) : (
-                                      <span>{rp(r.dividenPerLembar as number)}</span>
-                                    )}
-                                    {r.isManualOverride && (
-                                      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-700" title="Nilai dikoreksi manual oleh kamu">
-                                        Manual
-                                      </span>
-                                    )}
-                                    {r.anomali && (
-                                      <span
-                                        className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-700"
-                                        title={`Berbeda ${r.anomali.deviasiPct > 0 ? '+' : ''}${r.anomali.deviasiPct.toFixed(0)}% dari rata-rata tahun lain (${rp(r.anomali.avgTahunLain)}) — periksa kembali`}
-                                      >
-                                        ⚠ Cek data
-                                      </span>
-                                    )}
-                                    <button
-                                      onClick={() => openOverrideEditor(r.saham, r.dividenPerLembar)}
-                                      title="Koreksi manual"
-                                      className="text-gray-400 hover:text-indigo-600"
-                                    >
-                                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                                      </svg>
-                                    </button>
-                                    {r.isManualOverride && (
-                                      <button
-                                        onClick={() => resetOverride(r.saham)}
-                                        disabled={savingOverride}
-                                        title="Kembalikan ke nilai otomatis dari riwayat dividen"
-                                        className="text-gray-400 hover:text-red-600 disabled:opacity-50"
-                                      >
-                                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                                        </svg>
-                                      </button>
-                                    )}
-                                  </div>
+                                  <span>{rp(r.dividenPerLembar as number)}</span>
                                 )}
-                              </td>
-                              <td className="px-4 py-3 text-gray-500 whitespace-nowrap">
-                                {r.isManualOverride ? (
-                                  <span className="text-purple-600">Manual</span>
-                                ) : r.yearUsed ? (
-                                  <>{r.yearUsed}{r.isFallbackYear && <span className="text-amber-600 ml-1" title="Tahun penuh terakhir belum ada data — pakai tahun terakhir yang tersedia">*</span>}</>
-                                ) : '-'}
-                              </td>
-                              <td className="px-4 py-3 font-bold text-green-600 whitespace-nowrap">{rp(r.estimasi)}</td>
-                              <td></td>
-                            </tr>
-                          )
-                        })}
+                                {r.isManualOverride && (
+                                  <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-700" title="Nilai dikoreksi manual oleh kamu">
+                                    Manual
+                                  </span>
+                                )}
+                                {r.anomali && (
+                                  <span
+                                    className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-700"
+                                    title={`Berbeda ${r.anomali.deviasiPct > 0 ? '+' : ''}${r.anomali.deviasiPct.toFixed(0)}% dari rata-rata tahun lain (${rp(r.anomali.avgTahunLain)}) — periksa kembali`}
+                                  >
+                                    ⚠ Cek data
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                            <td className="px-4 py-3 text-gray-500 whitespace-nowrap">
+                              {r.isManualOverride ? (
+                                <span className="text-purple-600">Manual</span>
+                              ) : r.yearUsed ? (
+                                <>{r.yearUsed}{r.isFallbackYear && <span className="text-amber-600 ml-1" title="Tahun penuh terakhir belum ada data — pakai tahun terakhir yang tersedia">*</span>}</>
+                              ) : '-'}
+                            </td>
+                            <td className="px-4 py-3 font-bold text-green-600 whitespace-nowrap">{rp(r.estimasi)}</td>
+                            <td className="px-4 py-3 text-sm whitespace-nowrap">
+                              <div className="flex items-center gap-3">
+                                <button
+                                  onClick={() => openEditOverride(r.saham, r.dividenPerLembar)}
+                                  className="text-xs text-indigo-600 hover:text-indigo-800 font-medium"
+                                >
+                                  edit
+                                </button>
+                                {r.isManualOverride && (
+                                  <button
+                                    onClick={() => resetOverride(r.saham)}
+                                    disabled={deletingOverrideSaham === r.saham}
+                                    className="text-xs text-red-600 hover:text-red-800 disabled:opacity-50"
+                                  >
+                                    {deletingOverrideSaham === r.saham ? '...' : 'Hapus'}
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
                       </tbody>
                       <tfoot>
                         <tr className="bg-gray-50 border-t-2 border-gray-300">
@@ -1247,7 +1241,7 @@ function DividendsContent() {
                       {sahamTanpaRiwayat.map(saham => (
                         <button
                           key={saham}
-                          onClick={() => { setShowValidasiModal(false); openOverrideEditor(saham, null) }}
+                          onClick={() => { setShowValidasiModal(false); openEditOverride(saham, null) }}
                           className="px-2 py-1 rounded text-xs font-medium bg-amber-100 text-amber-800 hover:bg-amber-200"
                           title="Klik untuk isi estimasi manual"
                         >
@@ -1291,6 +1285,78 @@ function DividendsContent() {
                 className="px-4 py-2 bg-gray-100 text-gray-700 text-sm font-medium rounded-md hover:bg-gray-200"
               >
                 Tutup
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Tambah/Edit Koreksi Manual Modal — tab Estimasi Dividen */}
+      {showOverrideModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="fixed inset-0 bg-black/40" onClick={closeOverrideModal} />
+          <div className="relative z-50 bg-white rounded-xl shadow-2xl w-full max-w-sm mx-4 p-6">
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="text-lg font-bold text-gray-900">
+                {overrideModalLockSaham ? `Koreksi Manual — ${overrideModalSaham}` : 'Tambah Koreksi Manual'}
+              </h2>
+              <button onClick={closeOverrideModal} className="text-gray-400 hover:text-gray-600">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              {!overrideModalLockSaham && (
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Saham</label>
+                  <select
+                    value={overrideModalSaham}
+                    onChange={e => setOverrideModalSaham(e.target.value)}
+                    className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-indigo-500 focus:border-indigo-500"
+                  >
+                    <option value="">-- Pilih Saham --</option>
+                    {estimasiDividenData.filter(r => !r.isManualOverride).map(r => (
+                      <option key={r.saham} value={r.saham}>
+                        {r.saham}{r.needsInput ? ' (belum ada data)' : ` (otomatis: ${rp(r.autoDividenPerLembar ?? 0)})`}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-gray-400 mt-1">Hanya saham yang kamu miliki di Portofolio dan belum punya koreksi manual.</p>
+                </div>
+              )}
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">
+                  Dividen per Lembar (Rp) <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="number"
+                  autoFocus={overrideModalLockSaham}
+                  min={0}
+                  value={overrideInputValue}
+                  onChange={e => setOverrideInputValue(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') saveOverride() }}
+                  placeholder="Contoh: 150"
+                  className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-indigo-500 focus:border-indigo-500"
+                />
+                <p className="text-xs text-gray-400 mt-1">Nilai ini akan dikalikan lot yang kamu miliki saat ini untuk menghitung estimasi.</p>
+              </div>
+            </div>
+
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                onClick={closeOverrideModal}
+                className="px-4 py-2 bg-gray-100 text-gray-700 text-sm font-medium rounded-md hover:bg-gray-200"
+              >
+                Batal
+              </button>
+              <button
+                onClick={saveOverride}
+                disabled={savingOverride || !overrideModalSaham || !overrideInputValue}
+                className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-md hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {savingOverride ? 'Menyimpan...' : 'Simpan'}
               </button>
             </div>
           </div>
