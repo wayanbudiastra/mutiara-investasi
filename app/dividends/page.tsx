@@ -36,6 +36,14 @@ interface Security {
   status: 'ACTIVE' | 'INACTIVE'
 }
 
+interface PortfolioRow {
+  id: string
+  keterangan: string
+  saham: string
+  hargaRata: number
+  lot: number
+}
+
 const emptyForm = {
   bulan: 'Januari',
   tahun: new Date().getFullYear(),
@@ -55,8 +63,11 @@ function DividendsContent() {
   const [dividends, setDividends] = useState<Dividend[]>([])
   const [securities, setSecurities] = useState<Security[]>([])
   const [loading, setLoading] = useState(false)
-  const [activeTab, setActiveTab] = useState<'data' | 'rekap' | 'sekuritas' | 'saham'>('data')
+  const [refreshingCache, setRefreshingCache] = useState(false)
+  const [activeTab, setActiveTab] = useState<'data' | 'rekap' | 'sekuritas' | 'saham' | 'estimasi'>('data')
+  const [portfolioRows, setPortfolioRows] = useState<PortfolioRow[]>([])
   const [rekapSahamPeriod, setRekapSahamPeriod] = useState<'1' | '3' | '5' | 'all'>('all')
+  const [estimasiBannerCollapsed, setEstimasiBannerCollapsed] = useState(false)
   const [selectedRekapKet, setSelectedRekapKet] = useState('')
   const [showModal, setShowModal] = useState(false)
   const [editItem, setEditItem] = useState<Dividend | null>(null)
@@ -88,6 +99,25 @@ function DividendsContent() {
     }
   }, [])
 
+  const fetchPortfolio = useCallback(async () => {
+    try {
+      const res = await fetch('/api/portfolio')
+      if (res.ok) setPortfolioRows(await res.json())
+    } catch {
+      // silently fail — tab Estimasi Dividen akan tampil kosong
+    }
+  }, [])
+
+  const handleRefreshCache = useCallback(async () => {
+    setRefreshingCache(true)
+    try {
+      await fetch('/api/dividends/revalidate', { method: 'POST' })
+      await fetchDividends()
+    } finally {
+      setRefreshingCache(false)
+    }
+  }, [fetchDividends])
+
   const fetchSecurities = useCallback(async (userId: string) => {
     try {
       // fetch all active securities (limit 100 is enough for a dropdown)
@@ -110,10 +140,11 @@ function DividendsContent() {
     if (status === 'authenticated') {
       fetch('/api/subscription/status').then(r => r.json()).then(setProAccess)
       fetchDividends()
+      fetchPortfolio()
       const userId = (session?.user as any)?.id
       if (userId) fetchSecurities(userId)
     }
-  }, [status, session, fetchDividends, fetchSecurities])
+  }, [status, session, fetchDividends, fetchPortfolio, fetchSecurities])
 
   const openAdd = () => {
     setEditItem(null)
@@ -266,6 +297,47 @@ function DividendsContent() {
     .sort((a, b) => b.total - a.total)
   const rekapSahamTotal = rekapSahamData.reduce((s, r) => s + r.total, 0)
 
+  // Estimasi Dividen Tahun Depan — dividen/lembar tahun terakhir (DONE) dikalikan
+  // lot yang dimiliki SAAT INI di Portofolio (bukan lot saat dividen historis diterima)
+  const nextYear = currentYear + 1
+  const portfolioLotMap = portfolioRows.reduce((acc, r) => {
+    acc[r.saham] = (acc[r.saham] ?? 0) + r.lot
+    return acc
+  }, {} as Record<string, number>)
+
+  const dividendByStockYear = doneDividends.reduce((acc, d) => {
+    if (!acc[d.saham]) acc[d.saham] = {}
+    acc[d.saham][d.tahun] = (acc[d.saham][d.tahun] ?? 0) + Number(d.dividen)
+    return acc
+  }, {} as Record<string, Record<number, number>>)
+
+  const estimasiDividenData = Object.entries(portfolioLotMap)
+    .filter(([, lot]) => lot > 0)
+    .map(([saham, lot]) => {
+      const yearsMap = dividendByStockYear[saham]
+      if (!yearsMap) return null
+      const yearsAvailable = Object.keys(yearsMap).map(Number).sort((a, b) => b - a)
+      const lastFullYear = yearsAvailable.find(y => y === currentYear - 1)
+      const yearUsed = lastFullYear ?? yearsAvailable[0]
+      const dividenPerLembar = yearsMap[yearUsed]
+      return {
+        saham,
+        lot,
+        yearUsed,
+        isFallbackYear: yearUsed !== currentYear - 1,
+        dividenPerLembar,
+        estimasi: dividenPerLembar * lot * 100,
+      }
+    })
+    .filter((r): r is NonNullable<typeof r> => r !== null)
+    .sort((a, b) => b.estimasi - a.estimasi)
+
+  const totalEstimasiDividenTahunDepan = estimasiDividenData.reduce((s, r) => s + r.estimasi, 0)
+  const sahamTanpaRiwayat = Object.entries(portfolioLotMap)
+    .filter(([saham, lot]) => lot > 0 && !dividendByStockYear[saham])
+    .map(([saham]) => saham)
+    .sort()
+
   const totalDone = doneDividends
     .filter(d => d.tahun === currentYear)
     .reduce((s, d) => s + Number(d.total), 0)
@@ -290,15 +362,29 @@ function DividendsContent() {
             <h1 className="text-3xl font-bold text-gray-900">Rekap Dividen</h1>
             <p className="mt-1 text-sm text-gray-500">{dividends.length} data tersimpan</p>
           </div>
-          <button
-            onClick={openAdd}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-md hover:bg-indigo-700"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-            </svg>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleRefreshCache}
+              disabled={refreshingCache}
+              title="Muat ulang data terbaru dari database (berguna setelah import massal via script)"
+              className="inline-flex items-center gap-2 px-3 py-2 border border-gray-300 text-gray-700 text-sm font-medium rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <svg className={`w-4 h-4 ${refreshingCache ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              {refreshingCache ? 'Memuat...' : 'Muat Ulang Data'}
+            </button>
+            <button
+              onClick={openAdd}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-md hover:bg-indigo-700"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
             Tambah Dividen
-          </button>
+            </button>
+          </div>
         </div>
 
         {/* Summary cards — Year To Date */}
@@ -325,6 +411,7 @@ function DividendsContent() {
               ['rekap', 'Rekap Chart'],
               ['sekuritas', 'Rekap By Sekuritas'],
               ['saham', 'Rekap By Saham'],
+              ['estimasi', 'Estimasi Dividen'],
             ] as const).map(([tab, label]) => (
               <button
                 key={tab}
@@ -819,6 +906,110 @@ function DividendsContent() {
                     </table>
                   </div>
                 </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Estimasi Dividen Tab */}
+        {activeTab === 'estimasi' && (
+          <div>
+            {/* Disclaimer permanen — bukan angka pasti */}
+            <div className="mb-6 bg-amber-50 border border-amber-200 rounded-lg">
+              <button
+                onClick={() => setEstimasiBannerCollapsed(c => !c)}
+                className="w-full flex items-center gap-2 px-4 py-2.5 text-left"
+              >
+                <span className="flex-shrink-0 w-5 h-5 rounded-full bg-amber-400 text-white text-xs font-bold flex items-center justify-center">i</span>
+                <span className="text-sm font-medium text-amber-900 flex-1">
+                  {estimasiBannerCollapsed ? 'Ini estimasi, bukan angka pasti' : 'Bagaimana estimasi ini dihitung?'}
+                </span>
+                <svg className={`w-4 h-4 text-amber-600 transition-transform ${estimasiBannerCollapsed ? '' : 'rotate-180'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+              {!estimasiBannerCollapsed && (
+                <p className="px-4 pb-3 text-sm text-amber-800">
+                  Untuk setiap saham yang kamu miliki <strong>saat ini</strong> di tab Portofolio, sistem mengambil dividen per lembar
+                  tahun {currentYear - 1} (tahun penuh terakhir, status DONE) dari riwayat Rekap Dividen, lalu mengalikannya dengan
+                  jumlah lot yang kamu pegang <strong>sekarang</strong> — bukan jumlah lot saat dividen itu diterima dulu.
+                  <strong> Ini hanya estimasi, bukan angka pasti</strong> — dividen aktual tahun {nextYear} tergantung kebijakan emiten
+                  dan tidak dijamin sama atau berulang seperti tahun sebelumnya. Kalau kamu menambah/mengurangi posisi, estimasi ini
+                  akan berubah mengikuti data Portofolio terbaru.
+                </p>
+              )}
+            </div>
+
+            {portfolioRows.length === 0 ? (
+              <div className="bg-white rounded-lg shadow p-16 text-center text-gray-400">
+                Belum ada data Portofolio. Tambahkan posisi saham di menu Portofolio terlebih dahulu.
+              </div>
+            ) : estimasiDividenData.length === 0 ? (
+              <div className="bg-white rounded-lg shadow p-16 text-center text-gray-400">
+                Belum ada riwayat dividen (status DONE) untuk saham yang kamu miliki saat ini.
+              </div>
+            ) : (
+              <>
+                {/* Ringkasan */}
+                <div className="bg-white rounded-lg shadow p-5 mb-6">
+                  <p className="text-xs text-gray-500 mb-1">Estimasi Total Dividen Tahun {nextYear}</p>
+                  <p className="text-2xl font-bold text-green-600">{rp(totalEstimasiDividenTahunDepan)}</p>
+                  <p className="text-xs text-gray-400 mt-1">
+                    Berdasarkan {estimasiDividenData.length} saham yang dimiliki saat ini dengan riwayat dividen tersedia
+                  </p>
+                </div>
+
+                {/* Tabel per saham */}
+                <div className="bg-white shadow sm:rounded-lg overflow-hidden">
+                  <div className="px-4 py-3 border-b border-gray-100">
+                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Estimasi Per Saham</p>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full text-sm divide-y divide-gray-100">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          {['Saham', 'Lot Dimiliki Saat Ini', 'Dividen/Lembar', 'Tahun Acuan', `Estimasi ${nextYear}`].map(h => (
+                            <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {estimasiDividenData.map(r => (
+                          <tr key={r.saham} className="hover:bg-gray-50">
+                            <td className="px-4 py-3 whitespace-nowrap">
+                              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-100 text-indigo-800">
+                                {r.saham}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{r.lot}</td>
+                            <td className="px-4 py-3 text-gray-900 whitespace-nowrap">{rp(r.dividenPerLembar)}</td>
+                            <td className="px-4 py-3 text-gray-500 whitespace-nowrap">
+                              {r.yearUsed}{r.isFallbackYear && <span className="text-amber-600 ml-1" title="Tahun penuh terakhir belum ada data — pakai tahun terakhir yang tersedia">*</span>}
+                            </td>
+                            <td className="px-4 py-3 font-bold text-green-600 whitespace-nowrap">{rp(r.estimasi)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr className="bg-gray-50 border-t-2 border-gray-300">
+                          <td colSpan={4} className="px-4 py-3 font-bold text-gray-900">Total Estimasi {nextYear}</td>
+                          <td className="px-4 py-3 font-bold text-green-700">{rp(totalEstimasiDividenTahunDepan)}</td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                  {estimasiDividenData.some(r => r.isFallbackYear) && (
+                    <p className="px-4 py-3 text-xs text-gray-400 border-t border-gray-100">
+                      * Tidak ada data DONE tahun {currentYear - 1} untuk saham ini — dipakai tahun terakhir yang tersedia sebagai gantinya.
+                    </p>
+                  )}
+                </div>
+
+                {sahamTanpaRiwayat.length > 0 && (
+                  <p className="text-xs text-gray-400 mt-4">
+                    Saham dimiliki tanpa riwayat dividen DONE (tidak dihitung di estimasi): {sahamTanpaRiwayat.join(', ')}.
+                  </p>
+                )}
               </>
             )}
           </div>
