@@ -113,6 +113,8 @@ export default function PortfolioPage() {
   const [loadingPrice, setLoadingPrice] = useState(false)
   const [securities, setSecurities]     = useState<Security[]>([])
   const [filterKet, setFilterKet]       = useState('')
+  const [sortBy, setSortBy]             = useState<'floatRp' | 'floatPct' | null>(null)
+  const [sortDir, setSortDir]           = useState<'asc' | 'desc'>('desc')
 
   // Cash states
   const [cashRows, setCashRows]       = useState<CashRow[]>([])
@@ -502,6 +504,15 @@ export default function PortfolioPage() {
   const keterangans  = Array.from(new Set(rows.map(r => r.keterangan))).sort()
   const filtered     = filterKet ? rows.filter(r => r.keterangan === filterKet) : rows
 
+  const handleSort = (field: 'floatRp' | 'floatPct') => {
+    if (sortBy === field) {
+      setSortDir(d => d === 'desc' ? 'asc' : 'desc')
+    } else {
+      setSortBy(field)
+      setSortDir('desc')
+    }
+  }
+
   const getPrice = (saham: string) => prices[saham]?.price ?? null
   const getIsCache = (saham: string) => prices[saham]?.isCache ?? false
   const getCacheAt = (saham: string) => prices[saham]?.lastPriceAt ?? null
@@ -516,6 +527,20 @@ export default function PortfolioPage() {
     const floatPct   = floatRp != null && modal > 0 ? (floatRp / modal) * 100 : null
     return { modal, hargaAkhir, isCache, cacheAt, nilaiPasar, floatRp, floatPct }
   }
+
+  const sortedFiltered = sortBy
+    ? [...filtered].sort((a, b) => {
+        const va = calc(a)[sortBy]
+        const vb = calc(b)[sortBy]
+        if (va == null && vb == null) return 0
+        if (va == null) return 1  // null selalu di bawah
+        if (vb == null) return -1
+        return sortDir === 'asc' ? va - vb : vb - va
+      })
+    : filtered
+
+  const sortArrow = (field: 'floatRp' | 'floatPct') =>
+    sortBy !== field ? <span className="ml-1 text-gray-300">↕</span> : sortDir === 'asc' ? <span className="ml-1 text-indigo-600">↑</span> : <span className="ml-1 text-indigo-600">↓</span>
 
   const totalModal      = filtered.reduce((s, r) => s + r.hargaRata * r.lot * 100, 0)
   const totalNilaiPasar = filtered.reduce((s, r) => {
@@ -1521,13 +1546,24 @@ export default function PortfolioPage() {
               <table className="min-w-full divide-y divide-gray-200 text-sm">
                 <thead className="bg-gray-50">
                   <tr>
-                    {['No','Akun Sekuritas','Saham','Avg Price','Lot','Modal','Harga Terakhir','Nilai Pasar','Floating P/L (Rp)','Floating P/L (%)','Aksi'].map(h => (
+                    {['No','Akun Sekuritas','Saham','Avg Price','Lot','Modal','Harga Terakhir','Nilai Pasar'].map(h => (
                       <th key={h} className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
                     ))}
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
+                      <button onClick={() => handleSort('floatRp')} className="inline-flex items-center hover:text-gray-700">
+                        Floating P/L (Rp){sortArrow('floatRp')}
+                      </button>
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
+                      <button onClick={() => handleSort('floatPct')} className="inline-flex items-center hover:text-gray-700">
+                        Floating P/L (%){sortArrow('floatPct')}
+                      </button>
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">Aksi</th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {filtered.map((row, idx) => {
+                  {sortedFiltered.map((row, idx) => {
                     const { modal, hargaAkhir, isCache, cacheAt, nilaiPasar, floatRp, floatPct } = calc(row)
                     return (
                       <tr key={row.id} className={rowBg(floatRp)}>
