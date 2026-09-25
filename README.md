@@ -80,6 +80,13 @@ ADMIN_USER_IDS="cmo8gr6wg000013555943rxay"
 # MIDTRANS_SERVER_KEY="SB-Mid-server-xxxx"
 # MIDTRANS_CLIENT_KEY="SB-Mid-client-xxxx"
 # MIDTRANS_IS_PRODUCTION=false
+
+# ── Cron Job ──────────────────────────────────────────────────────────────────
+# Token yang di-cek endpoint /api/cron/auto-journal (auto-generate jurnal harian).
+# Dikirim sebagai header "Authorization: Bearer $CRON_SECRET" oleh cron job
+# hosting (lihat panduan "Cron Job — Auto Jurnal Harian") — generate dengan:
+# openssl rand -hex 32
+CRON_SECRET="isi-dengan-random-string"
 ```
 
 > **Penting:** File `.env.local` sudah ada di `.gitignore`. Jangan pernah commit file ini ke repositori.
@@ -138,6 +145,7 @@ Di dashboard Vercel → **Settings → Environment Variables**, tambahkan semua 
 | `NEXTAUTH_URL` | `https://domain-anda.vercel.app` | Production |
 | `PRO_ENABLED` | `false` (awal) atau `true` | Production |
 | `ADMIN_USER_IDS` | ID user admin | Production |
+| `CRON_SECRET` | Random string (`openssl rand -hex 32`) | Production |
 
 > **Generate NEXTAUTH_SECRET:**
 > ```bash
@@ -165,6 +173,31 @@ npm run db:push
 ### Auto-Deploy
 
 Setiap `git push` ke branch `master` akan otomatis men-trigger deploy ulang di Vercel.
+
+### Cron Job — Auto Jurnal Harian (Hostinger Shared Hosting)
+
+Endpoint `/api/cron/auto-journal` membuat jurnal harian otomatis untuk tiap user Pro
+yang punya posisi portofolio — **hanya jika belum ada jurnal** untuk hari itu (baik
+yang dibuat manual lewat tombol "Buat Jurnal Hari Ini" maupun oleh cron sebelumnya).
+Endpoint ini tidak jalan sendiri — perlu dipicu dari luar setiap hari lewat **hPanel →
+Advanced → Cron Jobs**:
+
+1. Login ke **hPanel** → pilih domain/hosting terkait → **Advanced → Cron Jobs**
+2. Cek dulu **timezone** akun di hPanel (biasanya bisa diatur di halaman yang sama /
+   Account Settings) — sesuaikan jam di langkah berikut berdasarkan itu. Kalau
+   timezone akun **WIB**, pakai jam 22:00; kalau **UTC**, pakai jam 15:00 (22:00 WIB = 15:00 UTC).
+3. Pilih **Custom** schedule, isi: Minute `0`, Hour `22` (atau `15` jika akun UTC), sisanya `*`
+4. Command / URL yang dijalankan (pilih tipe "Curl" atau "Command" tergantung UI hPanel):
+   ```bash
+   curl -s -H "Authorization: Bearer <CRON_SECRET>" https://domain-anda.com/api/cron/auto-journal >/dev/null 2>&1
+   ```
+   Ganti `<CRON_SECRET>` dengan value yang sama seperti di `.env.local` / env production, dan
+   `domain-anda.com` dengan domain aplikasi yang sebenarnya.
+5. Simpan. Hostinger akan menjalankan command ini otomatis sesuai jadwal.
+
+> **Catatan:** karena token `CRON_SECRET` tertulis langsung di command cron, pastikan
+> akses hPanel dibatasi hanya untuk kamu sendiri. Uji manual kapan saja tanpa menunggu
+> jadwal dengan menjalankan `curl` di atas dari terminal manapun.
 
 ---
 
