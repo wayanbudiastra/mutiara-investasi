@@ -4,17 +4,29 @@ export const maxDuration = 60
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { checkProAccess } from '@/lib/subscription'
-import { randomUUID } from 'crypto'
+import { randomUUID, timingSafeEqual } from 'crypto'
 
 // Dipicu oleh Cron Job hosting (lihat README § Cron Job — Auto Jurnal Harian) setiap
-// jam 22:00 WIB — setelah market tutup. Request harus menyertakan header
-// "Authorization: Bearer $CRON_SECRET" yang cocok, atau ditolak.
-function checkAuth(request: NextRequest): boolean {
-  const expected = process.env.CRON_SECRET
-  if (!expected) return false
-  const auth = request.headers.get('authorization') ?? ''
-  const token = auth.replace(/^Bearer\s+/i, '')
-  return token === expected
+// jam 22:00 WIB — setelah market tutup. Token CRON_SECRET bisa dikirim lewat:
+//   - header "Authorization: Bearer <token>"
+//   - header "x-cron-secret: <token>" — proxy LiteSpeed/Apache di shared hosting
+//     (Hostinger) sering membuang header Authorization sebelum sampai ke Node.js
+//   - query string "?secret=<token>" — fallback terakhir jika semua header dibuang
+// Mengembalikan null jika valid, atau alasan penolakan (tanpa membocorkan token).
+function checkAuth(request: NextRequest): string | null {
+  const expected = process.env.CRON_SECRET?.trim().replace(/^["']|["']$/g, '')
+  if (!expected) return 'CRON_SECRET belum diset di environment server'
+
+  const bearer = (request.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '').trim()
+  const token  = bearer
+    || (request.headers.get('x-cron-secret') ?? '').trim()
+    || (request.nextUrl.searchParams.get('secret') ?? '').trim()
+  if (!token) return 'token tidak diterima (header Authorization kemungkinan dibuang proxy — pakai x-cron-secret atau ?secret=)'
+
+  const a = Buffer.from(token)
+  const b = Buffer.from(expected)
+  if (a.length !== b.length || !timingSafeEqual(a, b)) return 'token tidak cocok dengan CRON_SECRET'
+  return null
 }
 
 function todayWIB() {
@@ -77,8 +89,10 @@ interface PortfolioRow {
 }
 
 export async function GET(request: NextRequest) {
-  if (!checkAuth(request)) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const authError = checkAuth(request)
+  if (authError) {
+    console.warn(`[auto-journal] ditolak: ${authError}`)
+    return NextResponse.json({ error: 'Unauthorized', reason: authError }, { status: 401 })
   }
 
   const journalDate = todayWIB()

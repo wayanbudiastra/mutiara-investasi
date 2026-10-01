@@ -189,10 +189,14 @@ Advanced → Cron Jobs**:
 3. Pilih **Custom** schedule, isi: Minute `0`, Hour `22` (atau `15` jika akun UTC), sisanya `*`
 4. Command / URL yang dijalankan (pilih tipe "Curl" atau "Command" tergantung UI hPanel):
    ```bash
-   curl -s -H "Authorization: Bearer <CRON_SECRET>" https://domain-anda.com/api/cron/auto-journal >/dev/null 2>&1
+   /usr/bin/curl -sS --max-time 120 -H "x-cron-secret: <CRON_SECRET>" "https://domain-anda.com/api/cron/auto-journal" >> $HOME/auto-journal.log 2>&1
    ```
    Ganti `<CRON_SECRET>` dengan value yang sama seperti di `.env.local` / env production, dan
-   `domain-anda.com` dengan domain aplikasi yang sebenarnya.
+   `domain-anda.com` dengan domain aplikasi yang sebenarnya. Pakai header `x-cron-secret`
+   (bukan `Authorization`) — proxy LiteSpeed di Hostinger bisa membuang header
+   `Authorization` sebelum sampai ke Node.js. Hasil tiap eksekusi tercatat di
+   `~/auto-journal.log` (lihat lewat File Manager) — respons `401` berisi field `reason`
+   yang menjelaskan penyebabnya.
 5. Simpan. Hostinger akan menjalankan command ini otomatis sesuai jadwal.
 
 > **Catatan:** karena token `CRON_SECRET` tertulis langsung di command cron, pastikan
