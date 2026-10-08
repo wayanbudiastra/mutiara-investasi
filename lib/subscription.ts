@@ -71,6 +71,26 @@ export async function checkProAccess(userId: string): Promise<ProAccessResult> {
   return { hasAccess: false, isAdmin: false }
 }
 
+// Versi batch dari checkProAccess untuk banyak user sekaligus (dipakai cron auto-jurnal):
+// satu query untuk semua user, bukan satu query per user. Aturan aksesnya harus sama persis.
+export async function filterProUsers(userIds: string[]): Promise<Set<string>> {
+  await ensureTables()
+  if (!PRO_ENABLED) return new Set(userIds)
+
+  const result = new Set(userIds.filter(id => ADMIN_IDS.includes(id)))
+  const rest   = userIds.filter(id => !result.has(id))
+  if (rest.length === 0) return result
+
+  const rows = await prisma.$queryRawUnsafe<{ userId: string }[]>(
+    `SELECT DISTINCT "userId" FROM "subscriptions"
+     WHERE "userId" = ANY($1::text[]) AND "status" = 'ACTIVE' AND "expiredAt" > $2`,
+    rest,
+    new Date().toISOString()
+  )
+  for (const r of rows) result.add(r.userId)
+  return result
+}
+
 export const PLANS = [
   { id: 'MONTHLY',   label: 'Bulanan',   months: 1,  price: 15000,  priceLabel: 'Rp 15.000' },
   { id: 'QUARTERLY', label: 'Kuartalan', months: 3,  price: 35000,  priceLabel: 'Rp 35.000' },
