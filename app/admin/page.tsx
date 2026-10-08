@@ -33,6 +33,40 @@ const rp  = (v: number) => `Rp ${v.toLocaleString('id-ID')}`
 const fmt = (d: string) => new Date(d).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })
 const daysLeft = (exp: string | null) => exp ? Math.ceil((new Date(exp).getTime() - Date.now()) / 86400000) : null
 
+interface CronRun {
+  id: string
+  journalDate: string
+  ranAt: string
+  durationMs: number
+  status: 'success' | 'partial' | 'failed' | 'unauthorized'
+  createdCount: number
+  skippedCount: number
+  errorCount: number
+  staleCount: number
+  result: string
+}
+
+// Tanggal jurnal terakhir yang seharusnya sudah dibuat cron: hari kerja (Sen–Jum) terakhir
+// yang jam 22:00 WIB-nya sudah lewat (+15 menit toleransi)
+function expectedJournalDate(): string {
+  const wib = new Date(Date.now() + 7 * 3600000) // getter UTC dari objek ini = waktu WIB
+  const d = new Date(Date.UTC(wib.getUTCFullYear(), wib.getUTCMonth(), wib.getUTCDate()))
+  if (wib.getUTCHours() * 60 + wib.getUTCMinutes() < 22 * 60 + 15) d.setUTCDate(d.getUTCDate() - 1)
+  while (d.getUTCDay() === 0 || d.getUTCDay() === 6) d.setUTCDate(d.getUTCDate() - 1)
+  return d.toISOString().slice(0, 10)
+}
+
+const fmtDateTime = (d: string) => new Date(d).toLocaleString('id-ID', {
+  day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jakarta',
+})
+
+const CRON_STATUS: Record<CronRun['status'], { label: string; cls: string }> = {
+  success: { label: 'SUKSES',   cls: 'bg-green-100 text-green-700' },
+  partial: { label: 'SEBAGIAN', cls: 'bg-amber-100 text-amber-700' },
+  failed:  { label: 'GAGAL',    cls: 'bg-red-100 text-red-700' },
+  unauthorized: { label: 'DITOLAK (401)', cls: 'bg-red-100 text-red-700' },
+}
+
 const DURATION_OPTIONS = [
   { label: '7 hari',  value: 7 },
   { label: '30 hari', value: 30 },
@@ -64,6 +98,10 @@ export default function AdminPage() {
   const [activities, setActivities]         = useState<{ type: string; description: string; createdAt: string }[]>([])
   const [loadingActivity, setLoadingActivity] = useState(false)
 
+  // Monitoring cron auto-jurnal
+  const [cronRuns, setCronRuns]             = useState<CronRun[]>([])
+  const [showCronDetail, setShowCronDetail] = useState(false)
+
   useEffect(() => {
     if (status === 'unauthenticated') router.push('/login')
   }, [status, router])
@@ -76,6 +114,14 @@ export default function AdminPage() {
   }, [])
 
   useEffect(() => { if (status === 'authenticated') fetchUsers() }, [status, fetchUsers])
+
+  useEffect(() => {
+    if (status !== 'authenticated') return
+    fetch('/api/admin/cron-runs')
+      .then(r => r.ok ? r.json() : [])
+      .then(data => { if (Array.isArray(data)) setCronRuns(data) })
+      .catch(() => {})
+  }, [status])
 
   const toast = (msg: string) => { setToastMsg(msg); setTimeout(() => setToastMsg(''), 3000) }
 
@@ -202,6 +248,110 @@ export default function AdminPage() {
             </div>
           ))}
         </div>
+
+        {/* Monitoring Cron Auto-Jurnal */}
+        {(() => {
+          const expected = expectedJournalDate()
+          const last     = cronRuns[0]
+          const okForExpected = cronRuns.some(r => r.journalDate >= expected && (r.status === 'success' || r.status === 'partial'))
+          const lastResult = (() => {
+            try {
+              return last ? JSON.parse(last.result) as {
+                errors?: { userId: string; error: string }[]
+                stale?: { userId: string; symbols: string[] }[]
+                fatal?: string
+              } : null
+            } catch { return null }
+          })()
+          const health = !okForExpected
+            ? { cls: 'border-red-300 bg-red-50', dot: 'bg-red-500', text: `Belum ada eksekusi sukses untuk jurnal ${fmt(expected)} — cek jadwal cron & log` }
+            : last && (last.status !== 'success' || last.staleCount > 0)
+              ? { cls: 'border-amber-300 bg-amber-50', dot: 'bg-amber-500', text: 'Cron jalan, tapi eksekusi terakhir ada error atau memakai harga cadangan' }
+              : { cls: 'border-green-300 bg-green-50', dot: 'bg-green-500', text: 'Cron berjalan normal' }
+          const emailOf = (id: string) => users.find(u => u.id === id)?.email ?? id
+
+          return (
+            <div className={`mb-6 rounded-lg border p-4 ${health.cls}`}>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                <div className="flex items-center gap-2">
+                  <span className={`w-2.5 h-2.5 rounded-full ${health.dot}`} />
+                  <h2 className="text-sm font-bold text-gray-900">Cron Auto-Jurnal</h2>
+                </div>
+                <p className="text-xs text-gray-700">{health.text}</p>
+                {last && (
+                  <p className="text-xs text-gray-500 sm:ml-auto">
+                    Terakhir jalan: <strong>{fmtDateTime(last.ranAt)} WIB</strong>
+                    {' · '}{last.createdCount} dibuat · {last.skippedCount} dilewati · {last.errorCount} error
+                    {last.staleCount > 0 && <> · <span className="text-amber-700 font-semibold">{last.staleCount} harga cadangan</span></>}
+                  </p>
+                )}
+                {cronRuns.length > 0 && (
+                  <button onClick={() => setShowCronDetail(v => !v)}
+                    className="text-xs font-medium text-indigo-600 hover:text-indigo-800">
+                    {showCronDetail ? 'Sembunyikan' : 'Riwayat'}
+                  </button>
+                )}
+              </div>
+
+              {cronRuns.length === 0 && (
+                <p className="mt-2 text-xs text-gray-500">Belum ada riwayat — tercatat mulai eksekusi cron pertama setelah fitur ini di-deploy.</p>
+              )}
+
+              {showCronDetail && (
+                <div className="mt-3 space-y-3">
+                  {lastResult?.fatal && (
+                    <p className="text-xs text-red-700 bg-white rounded p-2 border border-red-200 break-all">{last?.status === 'unauthorized' ? 'Request ditolak' : 'Error fatal'}: {lastResult.fatal}</p>
+                  )}
+                  {lastResult?.errors && lastResult.errors.length > 0 && (
+                    <div className="text-xs bg-white rounded p-2 border border-red-200">
+                      <p className="font-semibold text-red-700 mb-1">Error per user (eksekusi terakhir)</p>
+                      {lastResult.errors.map((e, i) => (
+                        <p key={i} className="text-gray-700 break-all">{emailOf(e.userId)}: {e.error}</p>
+                      ))}
+                    </div>
+                  )}
+                  {lastResult?.stale && lastResult.stale.length > 0 && (
+                    <div className="text-xs bg-white rounded p-2 border border-amber-200">
+                      <p className="font-semibold text-amber-700 mb-1">Harga cadangan dipakai — Yahoo Finance gagal (eksekusi terakhir)</p>
+                      {lastResult.stale.map((st, i) => (
+                        <p key={i} className="text-gray-700">{emailOf(st.userId)}: {st.symbols.join(', ')}</p>
+                      ))}
+                    </div>
+                  )}
+                  <div className="overflow-x-auto bg-white rounded border border-gray-200">
+                    <table className="min-w-full text-xs divide-y divide-gray-100">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          {['Waktu (WIB)','Tgl Jurnal','Status','Dibuat','Dilewati','Error','Harga Cadangan','Durasi'].map(h => (
+                            <th key={h} className="px-3 py-2 text-left font-semibold text-gray-500 whitespace-nowrap">{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {cronRuns.map(r => (
+                          <tr key={r.id}>
+                            <td className="px-3 py-2 whitespace-nowrap text-gray-700">{fmtDateTime(r.ranAt)}</td>
+                            <td className="px-3 py-2 whitespace-nowrap text-gray-700">{fmt(r.journalDate)}</td>
+                            <td className="px-3 py-2">
+                              <span className={`px-2 py-0.5 rounded font-bold ${CRON_STATUS[r.status]?.cls ?? 'bg-gray-100 text-gray-600'}`}>
+                                {CRON_STATUS[r.status]?.label ?? r.status}
+                              </span>
+                            </td>
+                            <td className="px-3 py-2 text-green-700 font-semibold">{r.createdCount}</td>
+                            <td className="px-3 py-2 text-gray-500">{r.skippedCount}</td>
+                            <td className={`px-3 py-2 ${r.errorCount > 0 ? 'text-red-600 font-semibold' : 'text-gray-400'}`}>{r.errorCount}</td>
+                            <td className={`px-3 py-2 ${r.staleCount > 0 ? 'text-amber-700 font-semibold' : 'text-gray-400'}`}>{r.staleCount}</td>
+                            <td className="px-3 py-2 text-gray-500 whitespace-nowrap">{(r.durationMs / 1000).toFixed(1)} dtk</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+          )
+        })()}
 
         {/* Filter & Search */}
         <div className="mb-4 flex flex-wrap gap-3 items-center">

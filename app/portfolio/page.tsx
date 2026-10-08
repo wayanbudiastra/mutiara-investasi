@@ -46,12 +46,22 @@ interface CashSnapshot {
   catatan: string | null
 }
 
-function parseDetail(detailStr: string): { stocks: JournalDetail[]; cashSnapshot: CashSnapshot[] } {
+interface ParsedDetail {
+  stocks: JournalDetail[]
+  cashSnapshot: CashSnapshot[]
+  isAuto: boolean          // dibuat oleh cron auto-jurnal
+  staleSymbols: string[]   // saham yang harganya dari cache karena Yahoo Finance gagal
+}
+
+function parseDetail(detailStr: string): ParsedDetail {
   try {
     const p = JSON.parse(detailStr)
-    if (Array.isArray(p)) return { stocks: p as JournalDetail[], cashSnapshot: [] }
-    return { stocks: p.stocks ?? [], cashSnapshot: p.cashSnapshot ?? [] }
-  } catch { return { stocks: [], cashSnapshot: [] } }
+    if (Array.isArray(p)) return { stocks: p as JournalDetail[], cashSnapshot: [], isAuto: false, staleSymbols: [] }
+    return {
+      stocks: p.stocks ?? [], cashSnapshot: p.cashSnapshot ?? [],
+      isAuto: p.source === 'auto', staleSymbols: p.staleSymbols ?? [],
+    }
+  } catch { return { stocks: [], cashSnapshot: [], isAuto: false, staleSymbols: [] } }
 }
 
 interface JournalDetail {
@@ -64,6 +74,7 @@ interface JournalDetail {
   nilaiPasar: number | null
   floatRp: number | null
   floatPct: number | null
+  hargaCadangan?: boolean
 }
 
 interface CashRow {
@@ -762,6 +773,20 @@ export default function PortfolioPage() {
                                   <td className="px-4 py-3 text-gray-900 whitespace-nowrap font-medium">
                                     {fmtDate(j.journalDate)}
                                     {j.journalDate === today && <span className="ml-2 text-xs text-indigo-600 font-bold">Hari ini</span>}
+                                    {(() => {
+                                      const { isAuto, staleSymbols } = parseDetail(j.detail)
+                                      return (
+                                        <>
+                                          {isAuto && <span className="ml-2 px-1.5 py-0.5 rounded text-[10px] font-bold bg-gray-100 text-gray-500" title="Dibuat otomatis oleh sistem jam 22:00 WIB">AUTO</span>}
+                                          {staleSymbols.length > 0 && (
+                                            <span className="ml-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-700"
+                                              title={`Harga ${staleSymbols.join(', ')} memakai harga tersimpan terakhir karena data pasar gagal diambil`}>
+                                              ⚠ HARGA CADANGAN
+                                            </span>
+                                          )}
+                                        </>
+                                      )
+                                    })()}
                                   </td>
                                   <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{rp(j.totalModal)}</td>
                                   <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{rp(j.totalNilaiPasar)}</td>
@@ -1965,10 +1990,19 @@ export default function PortfolioPage() {
               </button>
             </div>
             {(() => {
-              const { stocks, cashSnapshot } = parseDetail(detailJournal.detail)
+              const { stocks, cashSnapshot, isAuto, staleSymbols } = parseDetail(detailJournal.detail)
               const jAset = detailJournal.totalAset > 0 ? detailJournal.totalAset : detailJournal.totalNilaiPasar
               return (
                 <>
+                  {isAuto && (
+                    <p className="text-xs text-gray-500 mb-2">Jurnal ini dibuat otomatis oleh sistem (jam 22:00 WIB).</p>
+                  )}
+                  {staleSymbols.length > 0 && (
+                    <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                      ⚠ Data pasar gagal diambil saat jurnal dibuat — harga <strong>{staleSymbols.join(', ')}</strong> memakai
+                      harga tersimpan terakhir, sehingga nilai pasar mungkin tidak mencerminkan harga penutupan hari itu.
+                    </div>
+                  )}
                   <div className="bg-gray-50 rounded-lg p-3 mb-4 grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
                     {[
                       { l: 'Modal',       v: rp(detailJournal.totalModal),      c: 'text-gray-900' },
@@ -2004,7 +2038,10 @@ export default function PortfolioPage() {
                       <td className="px-3 py-2 whitespace-nowrap">{rp(d.hargaRata)}</td>
                       <td className="px-3 py-2">{d.lot}</td>
                       <td className="px-3 py-2 whitespace-nowrap">{rp(d.modal)}</td>
-                      <td className="px-3 py-2 whitespace-nowrap">{d.hargaTerakhir != null ? rp(d.hargaTerakhir) : '—'}</td>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        {d.hargaTerakhir != null ? rp(d.hargaTerakhir) : '—'}
+                        {d.hargaCadangan && <span className="ml-1 text-amber-600" title="Harga tersimpan terakhir — data pasar gagal diambil">⚠</span>}
+                      </td>
                       <td className="px-3 py-2 whitespace-nowrap">{d.nilaiPasar != null ? rp(d.nilaiPasar) : '—'}</td>
                       <td className={`px-3 py-2 font-semibold whitespace-nowrap ${floatColor(d.floatRp)}`}>
                         {d.floatRp != null ? rp(d.floatRp) : '—'}
