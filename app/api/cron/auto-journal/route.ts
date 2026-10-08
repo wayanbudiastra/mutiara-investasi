@@ -66,6 +66,63 @@ async function ensureTables() {
       UNIQUE("userId", "keterangan")
     )
   `)
+  // Riwayat eksekusi cron — dibaca halaman Admin untuk memantau apakah cron jalan tiap hari
+  await prisma.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS "cron_runs" (
+      "id"           TEXT NOT NULL PRIMARY KEY,
+      "job"          TEXT NOT NULL,
+      "journalDate"  TEXT NOT NULL,
+      "ranAt"        TEXT NOT NULL,
+      "durationMs"   INTEGER NOT NULL,
+      "status"       TEXT NOT NULL,
+      "createdCount" INTEGER NOT NULL DEFAULT 0,
+      "skippedCount" INTEGER NOT NULL DEFAULT 0,
+      "errorCount"   INTEGER NOT NULL DEFAULT 0,
+      "staleCount"   INTEGER NOT NULL DEFAULT 0,
+      "result"       TEXT NOT NULL
+    )
+  `)
+}
+
+// Simpan ringkasan eksekusi; kegagalan mencatat tidak boleh menggagalkan respons cron
+async function recordRun(run: {
+  journalDate: string; ranAt: string; startedMs: number; status: 'success' | 'partial' | 'failed' | 'unauthorized'
+  created: string[]; skipped: unknown[]; errors: unknown[]; stale: unknown[]; fatal?: string
+}) {
+  try {
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO "cron_runs"
+         ("id","job","journalDate","ranAt","durationMs","status",
+          "createdCount","skippedCount","errorCount","staleCount","result")
+       VALUES ($1,'auto-journal',$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      randomUUID(), run.journalDate, run.ranAt, Date.now() - run.startedMs, run.status,
+      run.created.length, run.skipped.length, run.errors.length, run.stale.length,
+      JSON.stringify({ created: run.created, skipped: run.skipped, errors: run.errors, stale: run.stale, fatal: run.fatal })
+    )
+  } catch (err) {
+    console.error('[auto-journal] gagal mencatat cron_runs:', err)
+  }
+}
+
+// Catat request yang ditolak supaya admin bisa membedakan "cron tidak pernah memanggil"
+// dari "cron memanggil tapi token salah/dibuang proxy". Dibatasi 1 catatan per 10 menit
+// agar request acak ke URL publik ini tidak membanjiri tabel.
+async function recordRejected(reason: string, startedMs: number) {
+  try {
+    await ensureTables()
+    const since  = new Date(startedMs - 10 * 60 * 1000).toISOString()
+    const recent = await prisma.$queryRawUnsafe<{ id: string }[]>(
+      `SELECT "id" FROM "cron_runs" WHERE "job" = 'auto-journal' AND "status" = 'unauthorized' AND "ranAt" >= $1 LIMIT 1`,
+      since
+    )
+    if (recent.length > 0) return
+    await recordRun({
+      journalDate: todayWIB(), ranAt: new Date(startedMs).toISOString(), startedMs, status: 'unauthorized',
+      created: [], skipped: [], errors: [], stale: [], fatal: reason,
+    })
+  } catch (err) {
+    console.error('[auto-journal] gagal mencatat request ditolak:', err)
+  }
 }
 
 // Singleton yahoo-finance2 — pola sama dengan route portfolio lain
@@ -92,14 +149,18 @@ export async function GET(request: NextRequest) {
   const authError = checkAuth(request)
   if (authError) {
     console.warn(`[auto-journal] ditolak: ${authError}`)
+    await recordRejected(authError, Date.now())
     return NextResponse.json({ error: 'Unauthorized', reason: authError }, { status: 401 })
   }
 
+  const startedMs   = Date.now()
   const journalDate = todayWIB()
-  const ranAt = new Date().toISOString()
+  const ranAt = new Date(startedMs).toISOString()
   const created: string[] = []
   const skipped: { userId: string; reason: string }[] = []
   const errors: { userId: string; error: string }[] = []
+  // Saham yang harganya gagal diambil dari Yahoo sehingga jurnal memakai cache lastPrice
+  const stale: { userId: string; symbols: string[] }[] = []
 
   try {
     await ensureTables()
@@ -167,8 +228,10 @@ export async function GET(request: NextRequest) {
           return {
             keterangan: r.keterangan, saham: r.saham, hargaRata: r.hargaRata, lot: r.lot,
             modal, hargaTerakhir: hargaAkhir, nilaiPasar, floatRp, floatPct,
+            hargaCadangan: priceMap[r.saham] == null,
           }
         })
+        const staleSymbols = symbols.filter(sym => priceMap[sym] == null)
 
         const totalModal      = detail.reduce((s, d) => s + d.modal, 0)
         const totalNilaiPasar = detail.reduce((s, d) => s + (d.nilaiPasar ?? d.modal), 0)
@@ -191,20 +254,29 @@ export async function GET(request: NextRequest) {
           id, userId, journalDate,
           totalModal, totalNilaiPasar, totalFloatRp, totalFloatPct,
           totalCash, totalAset,
-          JSON.stringify({ stocks: detail, cashSnapshot: cashRows }), ranAt
+          JSON.stringify({ stocks: detail, cashSnapshot: cashRows, source: 'auto', staleSymbols }), ranAt
         )
 
         created.push(userId)
+        if (staleSymbols.length > 0) stale.push({ userId, symbols: staleSymbols })
       } catch (err) {
         errors.push({ userId, error: String(err) })
       }
     }
 
-    console.log(`[auto-journal] ${journalDate}: created=${created.length} skipped=${skipped.length} errors=${errors.length}`)
+    console.log(`[auto-journal] ${journalDate}: created=${created.length} skipped=${skipped.length} errors=${errors.length} stale=${stale.length}`)
 
-    return NextResponse.json({ ranAt, journalDate, created, skipped, errors })
+    await recordRun({
+      journalDate, ranAt, startedMs, status: errors.length > 0 ? 'partial' : 'success',
+      created, skipped, errors, stale,
+    })
+    return NextResponse.json({ ranAt, journalDate, created, skipped, errors, stale })
   } catch (error) {
     console.error('cron auto-journal error:', error)
+    await recordRun({
+      journalDate, ranAt, startedMs, status: 'failed',
+      created, skipped, errors, stale, fatal: String(error),
+    })
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
