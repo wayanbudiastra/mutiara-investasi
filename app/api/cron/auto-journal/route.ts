@@ -3,7 +3,7 @@ export const maxDuration = 60
 
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { checkProAccess } from '@/lib/subscription'
+import { filterProUsers } from '@/lib/subscription'
 import { randomUUID, timingSafeEqual } from 'crypto'
 
 // Dipicu oleh Cron Job hosting (lihat README § Cron Job — Auto Jurnal Harian) setiap
@@ -126,7 +126,8 @@ async function recordRejected(reason: string, startedMs: number) {
 }
 
 // Singleton yahoo-finance2 — pola sama dengan route portfolio lain
-let _yf: { quote: (s: string) => Promise<{ regularMarketPrice?: number }> } | null = null
+interface YFQuote { symbol?: string; regularMarketPrice?: number }
+let _yf: { quote: (s: string | string[]) => Promise<YFQuote | YFQuote[]> } | null = null
 function getYF() {
   if (!_yf) {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -134,6 +135,43 @@ function getYF() {
     _yf = new YFClass({ suppressNotices: ['yahooSurvey'] })
   }
   return _yf!
+}
+
+// Jalankan fn untuk tiap item dengan paralelisme terbatas — agar Yahoo / database tidak dibanjiri
+async function mapLimit<T>(items: T[], limit: number, fn: (item: T) => Promise<void>) {
+  for (let i = 0; i < items.length; i += limit) {
+    await Promise.all(items.slice(i, i + limit).map(fn))
+  }
+}
+
+// Ambil harga semua simbol unik sekaligus (satu request Yahoo per 50 simbol).
+// Jika satu batch gagal, coba per simbol supaya satu simbol bermasalah tidak menggagalkan semuanya.
+// Simbol yang tetap gagal bernilai null → jurnal memakai cache lastPrice (harga cadangan).
+async function fetchPrices(symbols: string[]): Promise<Map<string, number | null>> {
+  const yf = getYF()
+  const prices = new Map<string, number | null>(symbols.map(s => [s, null]))
+  const toPrice = (q?: YFQuote) => typeof q?.regularMarketPrice === 'number' ? q.regularMarketPrice : null
+
+  const BATCH = 50
+  for (let i = 0; i < symbols.length; i += BATCH) {
+    const chunk = symbols.slice(i, i + BATCH)
+    try {
+      const res    = await yf.quote(chunk.map(s => `${s}.JK`))
+      const quotes = Array.isArray(res) ? res : [res]
+      for (const q of quotes) {
+        const sym = q?.symbol?.replace(/\.JK$/i, '')
+        if (sym && prices.has(sym)) prices.set(sym, toPrice(q))
+      }
+    } catch {
+      await mapLimit(chunk, 5, async (sym) => {
+        try {
+          const q = await yf.quote(`${sym}.JK`)
+          prices.set(sym, toPrice(Array.isArray(q) ? q[0] : q))
+        } catch { /* tetap null → harga cadangan */ }
+      })
+    }
+  }
+  return prices
 }
 
 interface PortfolioRow {
@@ -145,6 +183,16 @@ interface PortfolioRow {
   lastPrice: number | null
 }
 
+interface CashRow {
+  userId: string
+  keterangan: string
+  saldo: number
+  catatan: string | null
+}
+
+// Alur dibuat batch supaya tetap cepat untuk ratusan member (cron-job.org timeout ±30 detik):
+// semua data dibaca dengan beberapa query besar, harga tiap simbol unik diambil sekali untuk
+// semua user, lalu jurnal disimpan paralel terbatas.
 export async function GET(request: NextRequest) {
   const authError = checkAuth(request)
   if (authError) {
@@ -165,106 +213,115 @@ export async function GET(request: NextRequest) {
   try {
     await ensureTables()
 
-    const users = await prisma.$queryRawUnsafe<{ userId: string }[]>(
-      `SELECT DISTINCT "userId" FROM "portfolios"`
+    // 1. Tentukan user yang perlu dibuatkan jurnal
+    const allRows = await prisma.$queryRawUnsafe<PortfolioRow[]>(
+      `SELECT "userId","keterangan","saham","hargaRata","lot","lastPrice" FROM "portfolios"`
     )
+    const rowsByUser = new Map<string, PortfolioRow[]>()
+    for (const r of allRows) {
+      const list = rowsByUser.get(r.userId) ?? []
+      list.push(r)
+      rowsByUser.set(r.userId, list)
+    }
+    const userIds = Array.from(rowsByUser.keys())
 
-    const yf = getYF()
+    // Sudah ada jurnal hari ini (dibuat manual maupun oleh cron sebelumnya) — lewati
+    const existing = new Set((await prisma.$queryRawUnsafe<{ userId: string }[]>(
+      `SELECT "userId" FROM "portfolio_journals" WHERE "journalDate" = $1`, journalDate
+    )).map(r => r.userId))
 
-    for (const { userId } of users) {
-      try {
-        // Sudah ada jurnal hari ini (baik dibuat manual maupun oleh cron sebelumnya) — lewati
-        const existing = await prisma.$queryRawUnsafe<{ id: string }[]>(
-          `SELECT "id" FROM "portfolio_journals" WHERE "userId" = $1 AND "journalDate" = $2 LIMIT 1`,
-          userId, journalDate
-        )
-        if (existing.length > 0) {
-          skipped.push({ userId, reason: 'jurnal hari ini sudah ada' })
-          continue
-        }
+    // Fitur jurnal adalah fitur Pro — aturan akses sama dengan UI (checkProAccess)
+    const proUsers = await filterProUsers(userIds.filter(id => !existing.has(id)))
 
-        // Fitur jurnal adalah fitur Pro — hormati status akses yang sama seperti UI
-        const access = await checkProAccess(userId)
-        if (!access.hasAccess) {
-          skipped.push({ userId, reason: 'tidak punya akses Pro' })
-          continue
-        }
-
-        const rows = await prisma.$queryRawUnsafe<PortfolioRow[]>(
-          `SELECT "userId","keterangan","saham","hargaRata","lot","lastPrice"
-           FROM "portfolios" WHERE "userId" = $1`,
-          userId
-        )
-        if (rows.length === 0) {
-          skipped.push({ userId, reason: 'tidak ada posisi portofolio' })
-          continue
-        }
-
-        // Ambil harga terkini per simbol unik — fallback ke cache lastPrice jika Yahoo gagal
-        const symbols  = Array.from(new Set(rows.map(r => r.saham)))
-        const priceMap: Record<string, number | null> = {}
-        await Promise.all(symbols.map(async (sym) => {
-          try {
-            const quote = await yf.quote(`${sym}.JK`)
-            const price = typeof quote?.regularMarketPrice === 'number' ? quote.regularMarketPrice : null
-            priceMap[sym] = price
-            if (price !== null) {
-              await prisma.$executeRawUnsafe(
-                `UPDATE "portfolios" SET "lastPrice"=$1,"lastPriceAt"=$2 WHERE "userId"=$3 AND "saham"=$4`,
-                price, ranAt, userId, sym
-              )
-            }
-          } catch {
-            priceMap[sym] = null
-          }
-        }))
-
-        const detail = rows.map(r => {
-          const modal      = r.hargaRata * r.lot * 100
-          const hargaAkhir = priceMap[r.saham] ?? r.lastPrice ?? null
-          const nilaiPasar = hargaAkhir != null ? hargaAkhir * r.lot * 100 : null
-          const floatRp    = nilaiPasar != null ? nilaiPasar - modal : null
-          const floatPct   = floatRp != null && modal > 0 ? (floatRp / modal) * 100 : null
-          return {
-            keterangan: r.keterangan, saham: r.saham, hargaRata: r.hargaRata, lot: r.lot,
-            modal, hargaTerakhir: hargaAkhir, nilaiPasar, floatRp, floatPct,
-            hargaCadangan: priceMap[r.saham] == null,
-          }
-        })
-        const staleSymbols = symbols.filter(sym => priceMap[sym] == null)
-
-        const totalModal      = detail.reduce((s, d) => s + d.modal, 0)
-        const totalNilaiPasar = detail.reduce((s, d) => s + (d.nilaiPasar ?? d.modal), 0)
-        const totalFloatRp    = totalNilaiPasar - totalModal
-        const totalFloatPct   = totalModal > 0 ? (totalFloatRp / totalModal) * 100 : 0
-
-        const cashRows = await prisma.$queryRawUnsafe<{ keterangan: string; saldo: number; catatan: string | null }[]>(
-          `SELECT "keterangan","saldo","catatan" FROM "portfolio_cash" WHERE "userId" = $1`,
-          userId
-        )
-        const totalCash = cashRows.reduce((s, c) => s + Number(c.saldo), 0)
-        const totalAset = totalNilaiPasar + totalCash
-
-        const id = randomUUID()
-        await prisma.$executeRawUnsafe(
-          `INSERT INTO "portfolio_journals"
-             ("id","userId","journalDate","totalModal","totalNilaiPasar","totalFloatRp","totalFloatPct",
-              "totalCash","totalAset","detail","createdAt")
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-          id, userId, journalDate,
-          totalModal, totalNilaiPasar, totalFloatRp, totalFloatPct,
-          totalCash, totalAset,
-          JSON.stringify({ stocks: detail, cashSnapshot: cashRows, source: 'auto', staleSymbols }), ranAt
-        )
-
-        created.push(userId)
-        if (staleSymbols.length > 0) stale.push({ userId, symbols: staleSymbols })
-      } catch (err) {
-        errors.push({ userId, error: String(err) })
-      }
+    const targets: string[] = []
+    for (const userId of userIds) {
+      if (existing.has(userId))       skipped.push({ userId, reason: 'jurnal hari ini sudah ada' })
+      else if (!proUsers.has(userId)) skipped.push({ userId, reason: 'tidak punya akses Pro' })
+      else targets.push(userId)
     }
 
-    console.log(`[auto-journal] ${journalDate}: created=${created.length} skipped=${skipped.length} errors=${errors.length} stale=${stale.length}`)
+    if (targets.length > 0) {
+      // 2. Harga: satu kali per simbol unik untuk semua user target
+      const symbols = Array.from(new Set(targets.flatMap(id => rowsByUser.get(id)!.map(r => r.saham))))
+      const prices  = await fetchPrices(symbols)
+
+      // Perbarui cache lastPrice untuk semua posisi pada simbol yang berhasil diambil
+      const fresh = symbols.filter(s => prices.get(s) != null)
+      if (fresh.length > 0) {
+        await prisma.$executeRawUnsafe(
+          `UPDATE "portfolios" AS p SET "lastPrice" = v.price, "lastPriceAt" = $1
+           FROM UNNEST($2::text[], $3::float8[]) AS v(saham, price)
+           WHERE p."saham" = v.saham`,
+          ranAt, fresh, fresh.map(s => prices.get(s)!)
+        )
+      }
+
+      // 3. Cash semua user target dalam satu query
+      const cashByUser = new Map<string, Omit<CashRow, 'userId'>[]>()
+      const cashRows = await prisma.$queryRawUnsafe<CashRow[]>(
+        `SELECT "userId","keterangan","saldo","catatan" FROM "portfolio_cash" WHERE "userId" = ANY($1::text[])`,
+        targets
+      )
+      for (const { userId, ...c } of cashRows) {
+        const list = cashByUser.get(userId) ?? []
+        list.push(c)
+        cashByUser.set(userId, list)
+      }
+
+      // 4. Susun & simpan jurnal per user, paralel terbatas
+      await mapLimit(targets, 10, async (userId) => {
+        try {
+          const rows = rowsByUser.get(userId)!
+          const detail = rows.map(r => {
+            const live       = prices.get(r.saham) ?? null
+            const modal      = r.hargaRata * r.lot * 100
+            const hargaAkhir = live ?? r.lastPrice ?? null
+            const nilaiPasar = hargaAkhir != null ? hargaAkhir * r.lot * 100 : null
+            const floatRp    = nilaiPasar != null ? nilaiPasar - modal : null
+            const floatPct   = floatRp != null && modal > 0 ? (floatRp / modal) * 100 : null
+            return {
+              keterangan: r.keterangan, saham: r.saham, hargaRata: r.hargaRata, lot: r.lot,
+              modal, hargaTerakhir: hargaAkhir, nilaiPasar, floatRp, floatPct,
+              hargaCadangan: live == null,
+            }
+          })
+          const staleSymbols = Array.from(new Set(rows.map(r => r.saham))).filter(s => prices.get(s) == null)
+
+          const totalModal      = detail.reduce((s, d) => s + d.modal, 0)
+          const totalNilaiPasar = detail.reduce((s, d) => s + (d.nilaiPasar ?? d.modal), 0)
+          const totalFloatRp    = totalNilaiPasar - totalModal
+          const totalFloatPct   = totalModal > 0 ? (totalFloatRp / totalModal) * 100 : 0
+
+          const cash      = cashByUser.get(userId) ?? []
+          const totalCash = cash.reduce((s, c) => s + Number(c.saldo), 0)
+          const totalAset = totalNilaiPasar + totalCash
+
+          // ON CONFLICT: user bisa saja membuat jurnal manual di sela proses cron — jangan error, lewati
+          const inserted = await prisma.$executeRawUnsafe(
+            `INSERT INTO "portfolio_journals"
+               ("id","userId","journalDate","totalModal","totalNilaiPasar","totalFloatRp","totalFloatPct",
+                "totalCash","totalAset","detail","createdAt")
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+             ON CONFLICT ("userId","journalDate") DO NOTHING`,
+            randomUUID(), userId, journalDate,
+            totalModal, totalNilaiPasar, totalFloatRp, totalFloatPct,
+            totalCash, totalAset,
+            JSON.stringify({ stocks: detail, cashSnapshot: cash, source: 'auto', staleSymbols }), ranAt
+          )
+          if (inserted === 0) {
+            skipped.push({ userId, reason: 'jurnal hari ini sudah ada' })
+            return
+          }
+
+          created.push(userId)
+          if (staleSymbols.length > 0) stale.push({ userId, symbols: staleSymbols })
+        } catch (err) {
+          errors.push({ userId, error: String(err) })
+        }
+      })
+    }
+
+    console.log(`[auto-journal] ${journalDate}: created=${created.length} skipped=${skipped.length} errors=${errors.length} stale=${stale.length} in ${Date.now() - startedMs}ms`)
 
     await recordRun({
       journalDate, ranAt, startedMs, status: errors.length > 0 ? 'partial' : 'success',
